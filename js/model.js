@@ -494,12 +494,19 @@
     return Array.isArray(items) ? items.filter((item) => !isDeleted(item)) : [];
   }
 
+  // 落地层广播变更：同步模块监听 workbench-write，自己决定什么时候推、推哪些。
+  // 页面代码不需要知道同步的存在，同步失败也不该影响本地读写。
+  function notifyChange(kind, path) {
+    root.dispatchEvent(new CustomEvent("workbench-write", { detail: { kind: kind, path: path } }));
+  }
+
   function deletedItems(items) {
     return Array.isArray(items) ? items.filter((item) => isDeleted(item)) : [];
   }
 
   const Workbench = {
-    dir: null,
+    dir: null,   // 本地文件夹句柄；IndexedDB 后端时为 null
+    fs: null,    // 落地后端，接口见 Storage.createLocal / createIndexed
     meta: null,
     status: null,
     DEFAULT_PROJECTS,
@@ -536,10 +543,14 @@
     todoWeekIso,
 
     async open() {
-      const status = { ok: false, needsPick: false, needsPermission: false, unsupported: false, folderName: "", error: "" };
+      const status = { ok: false, needsPick: false, needsPermission: false, unsupported: false, backend: "", folderName: "", error: "" };
       this.status = status;
       if (typeof root.showDirectoryPicker !== "function") {
+        // 没有文件夹可用（手机浏览器、非安全上下文）：落到 IndexedDB 后端。
+        // 这里仍然不算 ok，放不放行由云同步决定——配好了并能连上才让页面继续。
         status.unsupported = true;
+        status.backend = "indexed";
+        this.fs = Storage.createIndexed();
         return status;
       }
       let handle = null;
@@ -565,6 +576,7 @@
         return status;
       }
       this.dir = handle;
+      this.fs = Storage.createLocal(handle);
       try {
         this.meta = await this.ensureMeta();
       } catch (err) {
@@ -580,6 +592,7 @@
       const handle = await root.showDirectoryPicker({ mode: "readwrite", id: "workbench-data" });
       await Storage.saveHandle(handle);
       this.dir = handle;
+      this.fs = Storage.createLocal(handle);
       this.meta = await this.ensureMeta();
       return handle;
     },
@@ -590,12 +603,24 @@
       const perm = await handle.requestPermission({ mode: "readwrite" });
       if (perm !== "granted") throw new Error("没有获得读写权限");
       this.dir = handle;
+      this.fs = Storage.createLocal(handle);
       this.meta = await this.ensureMeta();
       return handle;
     },
 
+    // 底层读写收口：外部（资料库迁移旧文件、同步模块）走这两个方法，
+    // 不要再去碰 Storage 和后端的 handle。
+    async readText(path) {
+      return this.fs.readText(path);
+    },
+
+    async writeText(path, text) {
+      await this.fs.writeText(path, text);
+      notifyChange("write", path);
+    },
+
     async readJson(path, fallback) {
-      const text = await Storage.readText(this.dir, path);
+      const text = await this.fs.readText(path);
       if (text == null || text.trim() === "") {
         await this.writeJson(path, fallback);
         return structuredClone(fallback);
@@ -604,15 +629,17 @@
     },
 
     async writeJson(path, data) {
-      await Storage.writeText(this.dir, path, JSON.stringify(data, null, 2) + "\n");
+      await this.fs.writeText(path, JSON.stringify(data, null, 2) + "\n");
+      notifyChange("write", path);
     },
 
     async removeFile(path) {
-      await Storage.removeFile(this.dir, path);
+      await this.fs.removeFile(path);
+      notifyChange("remove", path);
     },
 
     async loadVaultEnvelope() {
-      const text = await Storage.readText(this.dir, "vault.json");
+      const text = await this.fs.readText("vault.json");
       if (text == null || text.trim() === "") return null;
       try {
         return JSON.parse(text);
@@ -622,7 +649,7 @@
     },
 
     async loadVaultBackup() {
-      const text = await Storage.readText(this.dir, "vault.backup.json");
+      const text = await this.fs.readText("vault.backup.json");
       if (text == null || text.trim() === "") return null;
       try {
         return JSON.parse(text);
@@ -632,9 +659,9 @@
     },
 
     async saveVaultEnvelope(envelope) {
-      const current = await Storage.readText(this.dir, "vault.json");
+      const current = await this.fs.readText("vault.json");
       if (current != null && current.trim() !== "") {
-        await Storage.writeText(this.dir, "vault.backup.json", current.endsWith("\n") ? current : current + "\n");
+        await this.writeText("vault.backup.json", current.endsWith("\n") ? current : current + "\n");
       }
       await this.writeJson("vault.json", envelope);
     },
@@ -775,12 +802,12 @@
     },
 
     async loadNoteIndex() {
-      const text = await Storage.readText(this.dir, "notes.json");
+      const text = await this.fs.readText("notes.json");
       if (text != null && text.trim() !== "") {
         const parsed = JSON.parse(text);
         return Array.isArray(parsed) ? parsed : [];
       }
-      const legacy = await Storage.readText(this.dir, "notes/index.json");
+      const legacy = await this.fs.readText("notes/index.json");
       if (legacy != null && legacy.trim() !== "") {
         const parsed = JSON.parse(legacy);
         const index = Array.isArray(parsed) ? parsed : [];
@@ -796,7 +823,7 @@
     },
 
     async readNoteBody(id) {
-      const text = await Storage.readText(this.dir, `notes/${id}.md`);
+      const text = await this.fs.readText(`notes/${id}.md`);
       return text == null ? "" : text;
     },
 
@@ -816,14 +843,14 @@
         deletedAt: item.deletedAt || "",
         updatedAt: item.updatedAt
       })));
-      await Storage.writeText(this.dir, `notes/${next.id}.md`, body == null ? "" : String(body));
+      await this.writeText(`notes/${next.id}.md`, body == null ? "" : String(body));
       return next;
     },
 
     async deleteNote(id) {
       const index = await this.loadNoteIndex();
       await this.saveNoteIndex(index.filter((item) => item.id !== id));
-      await Storage.removeFile(this.dir, `notes/${id}.md`);
+      await this.fs.removeFile(`notes/${id}.md`);
     }
   };
 

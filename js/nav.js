@@ -61,10 +61,24 @@
     writeIdList(HIDDEN_KEY, Array.from(ids));
   }
 
+  // 离开本机 exe 就活不了的页面：手机上不给入口，点了只会报错
+  const DESKTOP_ONLY = ["code", "version", "sn", "clipboard", "lan"];
+
+  // 本机地址 = 能用到 workbench-host.exe；通过托管域名或局域网 IP 访问都算「远程」
+  function isLocalHost() {
+    const host = location.hostname;
+    return host === "127.0.0.1" || host === "localhost" || host === "::1";
+  }
+
   // 侧栏和命令面板里实际展示的页面
   function navPages() {
     const hidden = hiddenPages();
-    return navOrder().filter((page) => !hidden.has(page.id));
+    const remote = !isLocalHost();
+    return navOrder().filter((page) => {
+      if (hidden.has(page.id)) return false;
+      if (remote && DESKTOP_ONLY.indexOf(page.id) >= 0) return false;
+      return true;
+    });
   }
 
   // 内联 SVG 图标，避免外部依赖。symbol 定义一次，全局用 <use> 引用。
@@ -233,6 +247,7 @@
     changeBtn.addEventListener("click", () => connectFolder("pick"));
     projectBtn.addEventListener("click", openProjects);
     settingsBtn.addEventListener("click", openSettings);
+    mountSyncBadge();
     setupBlockedLinks();
     setupTheme(themeBtn);
     setupMenuToggle();
@@ -316,6 +331,34 @@
     });
   }
 
+  function dotClassOf(state) {
+    if (state === "syncing") return "sync-dot is-syncing";
+    if (state === "ok") return "sync-dot is-ok";
+    if (state === "error") return "sync-dot is-error";
+    if (state === "dirty" || state === "locked") return "sync-dot is-dirty";
+    return "sync-dot is-off";
+  }
+
+  // 顶栏同步状态：小圆点 + 「同步」，点开是云同步面板。手机上比翻侧栏方便。
+  function mountSyncBadge() {
+    if (!root.Sync || !root.SyncUI) return;
+    const head = document.querySelector(".page-head");
+    if (!head || head.querySelector("#sync-badge")) return;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.id = "sync-badge";
+    button.className = "sync-badge";
+    const dot = document.createElement("span");
+    dot.className = dotClassOf(root.Sync.status().state);
+    button.append(dot, document.createTextNode("同步"));
+    button.addEventListener("click", () => root.SyncUI.openDialog());
+    head.append(button);
+    root.Sync.onChange((status) => {
+      dot.className = dotClassOf(status.state);
+      button.title = status.state === "error" ? (status.message || "同步失败") : "云同步";
+    });
+  }
+
   function setupTheme(btn) {
     const render = () => {
       const dark = document.documentElement.dataset.theme === "dark";
@@ -393,6 +436,11 @@
 
   function onFolderClick() {
     const status = Workbench.status || {};
+    // 手机这类没有文件夹可用的环境，按钮改成进云同步设置
+    if (status.unsupported) {
+      if (root.SyncUI) openSettings();
+      return undefined;
+    }
     return connectFolder(status.needsPermission ? "grant" : "pick");
   }
 
@@ -432,9 +480,12 @@
         + "完整使用请回到主机上打开。";
       button.hidden = true;
     } else if (status.unsupported) {
-      heading.textContent = "浏览器版本太旧";
-      text.textContent = "当前的浏览器不支持文件夹读写（需要 Edge 90+ 或 Chrome 86+）。请升级或换用新版 Edge / Chrome 打开本页面。";
-      button.hidden = true;
+      // 手机浏览器、或者非安全上下文：没有文件夹可读，但云同步能顶上
+      heading.textContent = "没有可用的数据文件夹";
+      text.textContent = "这个环境不支持文件夹读写（手机浏览器、或用非本机地址访问时都这样）。"
+        + "在电脑上打开工作台配好云同步，这里就能直接用了——数据存在本机浏览器里，云端是权威副本。";
+      if (root.SyncUI) button.textContent = "设置云同步";
+      else button.hidden = true;
     } else if (status.needsPermission) {
       heading.textContent = "允许访问文件夹";
       text.textContent = "这个文件夹之前选过。浏览器需要你再允许一次读写。工作台只写自己的文件。";
@@ -466,6 +517,18 @@
     document.getElementById("content").hidden = true;
   }
 
+  // 云同步能不能顶替本地文件夹：配过、并且这一页已经拿到密钥（输过密码，或本机记住过）
+  async function cloudReady() {
+    if (!root.Sync || !root.SyncCrypto) return false;
+    if (!root.SyncCrypto.hasConfig()) return false;
+    if (root.SyncCrypto.isUnlocked()) return true;
+    try {
+      return await root.SyncCrypto.recall();
+    } catch (err) {
+      return false;
+    }
+  }
+
   async function boot(page, onReady, options) {
     mount(page);
     window.addEventListener("unhandledrejection", (event) => {
@@ -482,12 +545,21 @@
     setStatus(status);
     refreshBadges();
     window.addEventListener("workbench-todos", refreshBadges);
-    if (!status.ok && !(options && options.optionalFolder)) {
+    // 没有数据文件夹时（手机、非安全上下文）只要云同步能用就放行：
+    // 数据落在 IndexedDB，云端才是权威副本。
+    if (!status.ok && !(options && options.optionalFolder) && !(await cloudReady())) {
       fillGate(status);
       return;
     }
     document.getElementById("gate").hidden = true;
     document.getElementById("content").hidden = false;
+    if (root.Sync) {
+      try {
+        await root.Sync.attach();
+      } catch (err) {
+        // 同步没跑起来不影响本地使用
+      }
+    }
     await onReady();
   }
 
@@ -1135,6 +1207,7 @@
       '<p class="sub">关掉不用的页面，侧栏和 Ctrl+K 搜索里都不再出现。'
         + "页面本身还在，直接输网址照样能打开；位置也保留，重新打开时回到原处。</p>",
       '<div class="settings-list" id="wb-settings-list"></div>',
+      '<div class="sync-slot" id="wb-sync-slot"></div>',
       '<div class="dialog-actions">',
       '  <button type="button" id="wb-settings-all" class="btn">全部打开</button>',
       '  <span class="dialog-spacer"></span>',
@@ -1174,10 +1247,49 @@
       const hint = document.createElement("span");
       hint.className = "settings-hint muted";
       hint.textContent = page.href;
-      row.append(box, name, hint);
+      row.append(box, name, hint, moveRow(page.id));
       list.append(row);
     });
     paintSettingsFooter(dialog);
+    mountSyncPanel(dialog);
+  }
+
+  // 触屏拖不动侧栏顺序，给一对上下按钮
+  function moveRow(id) {
+    const move = document.createElement("span");
+    move.className = "settings-move";
+    const up = document.createElement("button");
+    up.type = "button";
+    up.className = "linkish";
+    up.textContent = "↑";
+    up.title = "上移";
+    up.addEventListener("click", () => movePage(id, -1));
+    const down = document.createElement("button");
+    down.type = "button";
+    down.className = "linkish";
+    down.textContent = "↓";
+    down.title = "下移";
+    down.addEventListener("click", () => movePage(id, 1));
+    move.append(up, down);
+    return move;
+  }
+
+  function movePage(id, delta) {
+    const pages = navOrder();
+    const from = pages.findIndex((page) => page.id === id);
+    const to = from + delta;
+    if (from < 0 || to < 0 || to >= pages.length) return;
+    const moved = pages.splice(from, 1)[0];
+    pages.splice(to, 0, moved);
+    saveNavOrder(pages);
+    repaintNav();
+    paintSettings();
+  }
+
+  // 云同步分区：模块没加载（比如没引 js/sync-ui.js）就什么都不显示
+  function mountSyncPanel(dialog) {
+    const slot = dialog.querySelector("#wb-sync-slot");
+    if (slot && root.SyncUI) root.SyncUI.mount(slot);
   }
 
   function paintSettingsFooter(dialog) {
@@ -1265,5 +1377,5 @@
     });
   }
 
-  root.Nav = { boot, toast, fillProjects, setStatus, icon, openPalette, refreshBadges, pickPath, ask, openSettings };
+  root.Nav = { boot, toast, fillProjects, setStatus, icon, openPalette, refreshBadges, pickPath, ask, openSettings, isLocal: isLocalHost };
 })(typeof window !== "undefined" ? window : globalThis);

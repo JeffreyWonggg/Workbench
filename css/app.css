@@ -1909,6 +1909,149 @@ h2 { font-size: var(--text-lg); }
 
 .usage-foot { margin: 10px 0 0; font-size: 13px; }
 
+/* ===== 云同步面板（js/sync-ui.js） ===== */
+.sync-panel { display: flex; flex-direction: column; gap: var(--space-3); }
+
+.sync-panel h3 { margin: 0; font-size: 15px; font-weight: 600; }
+
+.sync-head { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.sync-state { display: flex; align-items: center; gap: var(--space-2); font-size: 13px; }
+
+.sync-state-text { color: var(--ink); }
+
+.sync-when { font-size: 12px; }
+
+.sync-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.sync-dot.is-ok { background: var(--ok); }
+.sync-dot.is-dirty,
+.sync-dot.is-locked { background: var(--pending); }
+.sync-dot.is-error { background: var(--danger); }
+.sync-dot.is-syncing { background: var(--accent); animation: sync-pulse 1.2s ease-in-out infinite; }
+
+@keyframes sync-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.sync-form { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.sync-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+
+.sync-field span { color: var(--muted); }
+
+.sync-field input { max-width: 320px; }
+
+.sync-check {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.sync-check input { flex: none; margin-top: 2px; }
+
+.sync-note { margin: 0; font-size: 13px; }
+.sync-note.is-error { color: var(--danger); }
+.sync-note.is-ok { color: var(--ok); }
+.sync-note.is-info { color: var(--muted); }
+
+.sync-conflicts,
+.sync-qr {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  border-top: 1px solid var(--card-line);
+  padding-top: var(--space-3);
+}
+
+.sync-conflict-head,
+.sync-qr-head { font-size: 13px; color: var(--muted); }
+
+.sync-conflict {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  font-size: 13px;
+}
+
+.sync-conflict-title { flex: 1 1 auto; min-width: 120px; }
+
+.sync-conflict-actions { display: flex; gap: var(--space-3); }
+
+.sync-qr-box { line-height: 0; }
+.sync-qr-box svg { width: 168px; height: 168px; }
+
+@media (max-width: 680px) {
+  .sync-field input { max-width: none; }
+}
+
+/* 触屏上把「查看 / 恢复 / 删除」撑到能点的大小 */
+@media (hover: none) {
+  .sync-conflict-actions .linkish {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0 6px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sync-dot.is-syncing { animation: none; }
+}
+
+/* 设置面板里的上下移按钮：触屏拖不动列表，用按钮代替 */
+.settings-move { display: flex; gap: 2px; flex: none; }
+
+@media (max-width: 680px) {
+  .settings-row .settings-hint { display: none; }
+}
+
+@media (hover: none) {
+  .settings-move .linkish {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+/* 顶栏同步入口：一个小圆点，点开是云同步面板 */
+.sync-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+  padding: 6px 10px;
+  border: 1px solid var(--card-line);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.sync-badge:hover { background: var(--hover); color: var(--ink); }
+
+/* 移动端：地址栏伸缩时侧栏跟着变高，别用 100vh；底部避开小黑条 */
+@media (max-width: 880px) {
+  #sidebar { height: 100dvh; }
+}
+
+@supports (padding: env(safe-area-inset-bottom)) {
+  .side-foot { padding-bottom: env(safe-area-inset-bottom); }
+}
+
 /* ===== 首页「今天要做的」 ===== */
 .focus-card { margin-bottom: var(--space-4); }
 

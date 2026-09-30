@@ -1,21 +1,41 @@
 (function (root) {
-  const DB_NAME = "workbench";
-  const DB_VERSION = 3;
-  const STORE = "handles";
-  const KEY = "dir";
+  /* 数据落地后端。两种实现，接口一致，js/model.js 只认接口：
+       本地文件夹：用户选的数据文件夹（File System Access API），数据就是明文 JSON 文件，
+                   和以前一样可以自己打开看、自己改。电脑端默认走这条。
+       IndexedDB ：没有文件夹可用时（手机浏览器不支持 showDirectoryPicker）的落地处，
+                   配合云同步使用，云端才是权威副本。
+     目录句柄本身仍然存在 IndexedDB 的 workbench 库里，文件库单独一个，互不干扰。 */
 
-  let dbPromise = null;
+  const HANDLE_DB = "workbench";
+  const HANDLE_VERSION = 3;
+  const HANDLE_STORE = "handles";
+  const HANDLE_KEY = "dir";
 
-  function openDb() {
-    if (dbPromise) return dbPromise;
-    dbPromise = new Promise((resolve, reject) => {
+  const FILE_DB = "workbench-fs";
+  const FILE_VERSION = 1;
+  const FILE_STORE = "files";
+
+  const dbCache = Object.create(null);
+
+  function upgradeHandles(db) {
+    if (!db.objectStoreNames.contains(HANDLE_STORE)) db.createObjectStore(HANDLE_STORE);
+    // 第 2 版遗留的 kv 存储保留不动，避免误删历史数据
+  }
+
+  function upgradeFiles(db) {
+    if (!db.objectStoreNames.contains(FILE_STORE)) db.createObjectStore(FILE_STORE);
+  }
+
+  function openDb(name) {
+    if (dbCache[name]) return dbCache[name];
+    const version = name === FILE_DB ? FILE_VERSION : HANDLE_VERSION;
+    const upgrade = name === FILE_DB ? upgradeFiles : upgradeHandles;
+    const promise = new Promise((resolve, reject) => {
       let settled = false;
-      const req = indexedDB.open(DB_NAME, DB_VERSION);
+      const req = indexedDB.open(name, version);
 
       req.onupgradeneeded = () => {
-        const db = req.result;
-        if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE);
-        // 第 2 版遗留的 kv 存储保留不动，避免误删历史数据
+        upgrade(req.result);
       };
 
       req.onsuccess = () => {
@@ -29,23 +49,24 @@
 
       req.onerror = () => {
         settled = true;
-        dbPromise = null;
+        delete dbCache[name];
         reject(req.error || new Error("打不开本地数据库"));
       };
 
       req.onblocked = () => {
         settled = true;
-        dbPromise = null;
+        delete dbCache[name];
         reject(new Error("数据库被其它标签页占用了。关掉其它工作台页面，再刷新这一页。"));
       };
     });
-    return dbPromise;
+    dbCache[name] = promise;
+    return promise;
   }
 
-  function idbGet(key) {
-    return openDb().then((db) => new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE, "readonly");
-      const req = tx.objectStore(STORE).get(key);
+  function idbGet(dbName, key) {
+    return openDb(dbName).then((db) => new Promise((resolve, reject) => {
+      const tx = db.transaction(FILE_STORE, "readonly");
+      const req = tx.objectStore(FILE_STORE).get(key);
       let value;
       req.onsuccess = () => {
         value = req.result;
@@ -57,11 +78,10 @@
     }));
   }
 
-  function idbPut(key, value) {
-    return openDb().then((db) => new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE, "readwrite");
-      // 文件夹句柄是结构化克隆对象，只能存进 IndexedDB，localStorage 存不了
-      const req = tx.objectStore(STORE).put(value, key);
+  function idbPut(dbName, key, value) {
+    return openDb(dbName).then((db) => new Promise((resolve, reject) => {
+      const tx = db.transaction(FILE_STORE, "readwrite");
+      const req = tx.objectStore(FILE_STORE).put(value, key);
       req.onerror = () => reject(req.error);
       tx.oncomplete = () => resolve(true);
       tx.onerror = () => reject(tx.error);
@@ -69,15 +89,71 @@
     }));
   }
 
+  function idbDelete(dbName, key) {
+    return openDb(dbName).then((db) => new Promise((resolve, reject) => {
+      const tx = db.transaction(FILE_STORE, "readwrite");
+      const req = tx.objectStore(FILE_STORE).delete(key);
+      req.onerror = () => reject(req.error);
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    }));
+  }
+
+  function idbKeys(dbName) {
+    return openDb(dbName).then((db) => new Promise((resolve, reject) => {
+      const tx = db.transaction(FILE_STORE, "readonly");
+      const req = tx.objectStore(FILE_STORE).getAllKeys();
+      let keys = [];
+      req.onsuccess = () => {
+        keys = req.result || [];
+      };
+      req.onerror = () => reject(req.error);
+      tx.oncomplete = () => resolve(keys);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    }));
+  }
+
   async function loadHandle() {
-    const handle = await idbGet(KEY);
-    if (!handle || typeof handle.queryPermission !== "function") return null;
-    return handle;
+    const value = await idbGetByName(HANDLE_DB, HANDLE_STORE, HANDLE_KEY);
+    if (!value || typeof value.queryPermission !== "function") return null;
+    return value;
   }
 
   async function saveHandle(handle) {
-    await idbPut(KEY, handle);
+    await idbPutByName(HANDLE_DB, HANDLE_STORE, HANDLE_KEY, handle);
   }
+
+  // 句柄库和数据库的 store 名不同，读写句柄时显式指定 store
+  function idbGetByName(dbName, store, key) {
+    return openDb(dbName).then((db) => new Promise((resolve, reject) => {
+      const tx = db.transaction(store, "readonly");
+      const req = tx.objectStore(store).get(key);
+      let value;
+      req.onsuccess = () => {
+        value = req.result;
+      };
+      req.onerror = () => reject(req.error);
+      tx.oncomplete = () => resolve(value === undefined ? null : value);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    }));
+  }
+
+  function idbPutByName(dbName, store, key, value) {
+    return openDb(dbName).then((db) => new Promise((resolve, reject) => {
+      const tx = db.transaction(store, "readwrite");
+      // 文件夹句柄是结构化克隆对象，只能存进 IndexedDB，localStorage 存不了
+      const req = tx.objectStore(store).put(value, key);
+      req.onerror = () => reject(req.error);
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    }));
+  }
+
+  /* ===== 本地文件夹后端 ===== */
 
   // 不建目录时，途中任何一层缺失都返回 null，交给调用方按「文件不存在」处理
   async function resolveParent(dir, path, create) {
@@ -128,5 +204,83 @@
     }
   }
 
-  root.Storage = { loadHandle, saveHandle, readText, writeText, removeFile };
+  // 列出某个前缀下的文件（同步时要枚举 notes/ 里的正文）
+  async function listFiles(dir, prefix) {
+    const clean = String(prefix || "");
+    const parts = clean.split("/").filter(Boolean);
+    let current = dir;
+    for (const part of parts) {
+      try {
+        current = await current.getDirectoryHandle(part, { create: false });
+      } catch (err) {
+        if (err && err.name === "NotFoundError") return [];
+        throw err;
+      }
+    }
+    const out = [];
+    for await (const entry of current.entries()) {
+      const name = entry[0];
+      const handle = entry[1];
+      if (handle && handle.kind === "file") out.push(clean + name);
+    }
+    return out.sort();
+  }
+
+  /* ===== IndexedDB 后端 ===== */
+
+  async function readIndexed(path) {
+    const value = await idbGet(FILE_DB, String(path));
+    return typeof value === "string" ? value : null;
+  }
+
+  async function writeIndexed(path, text) {
+    await idbPut(FILE_DB, String(path), String(text));
+  }
+
+  async function removeIndexed(path) {
+    await idbDelete(FILE_DB, String(path));
+  }
+
+  async function listIndexed(prefix) {
+    const keys = await idbKeys(FILE_DB);
+    const clean = String(prefix || "");
+    return keys
+      .filter((key) => typeof key === "string" && key.indexOf(clean) === 0)
+      .sort();
+  }
+
+  /* ===== 后端工厂：两种实现接口逐字一致 ===== */
+
+  function createLocal(dir) {
+    if (!dir) throw new Error("没有可用的数据文件夹");
+    return {
+      kind: "local",
+      name: dir.name || "数据文件夹",
+      handle: dir,
+      readText: (path) => readText(dir, path),
+      writeText: (path, text) => writeText(dir, path, text),
+      removeFile: (path) => removeFile(dir, path),
+      list: (prefix) => listFiles(dir, prefix)
+    };
+  }
+
+  function createIndexed() {
+    return {
+      kind: "indexed",
+      name: "本机浏览器",
+      handle: null,
+      readText: readIndexed,
+      writeText: writeIndexed,
+      removeFile: removeIndexed,
+      list: listIndexed
+    };
+  }
+
+  root.Storage = {
+    loadHandle,
+    saveHandle,
+    createLocal,
+    createIndexed,
+    hasDirectoryPicker: () => typeof root.showDirectoryPicker === "function"
+  };
 })(typeof window !== "undefined" ? window : globalThis);

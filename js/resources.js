@@ -236,7 +236,7 @@
 
   async function countLegacy() {
     try {
-      const text = await Storage.readText(Workbench.dir, LEGACY_FILE);
+      const text = await Workbench.readText(LEGACY_FILE);
       if (!text || !text.trim()) return 0;
       const parsed = JSON.parse(text);
       return normalizeVault(parsed).records.length;
@@ -500,8 +500,17 @@
 
   /* ================= 文件管理 ================= */
 
+  // 读/打开本机文件夹要靠 workbench-host.exe，手机上没有，这几处得收起来
+  function localService() {
+    return !Nav.isLocal || Nav.isLocal();
+  }
+
   async function pickLibraryFolder() {
     if (!vault) return;
+    if (!localService()) {
+      Nav.toast("选择本机文件夹需要在电脑上打开工作台");
+      return;
+    }
     try {
       const response = await fetch("http://127.0.0.1:47321/pick-file", {
         method: "POST",
@@ -535,6 +544,17 @@
       libraryEntries = [];
       libraryTruncated = false;
       renderTable();
+      return;
+    }
+    if (!localService()) {
+      libraryPath = "";
+      libraryEntries = [];
+      libraryTruncated = false;
+      renderTable();
+      const tip = document.getElementById("resource-empty");
+      tip.hidden = false;
+      tip.textContent = "读取本机文件夹需要在电脑上打开工作台";
+      document.getElementById("library-table-wrap").hidden = true;
       return;
     }
     const empty = document.getElementById("resource-empty");
@@ -695,6 +715,10 @@
 
   async function openLibraryItem(path, mode) {
     if (!vault || !vault.library.root) return;
+    if (!localService()) {
+      Nav.toast("打开本机文件需要在电脑上打开工作台");
+      return;
+    }
     try {
       const response = await fetch("http://127.0.0.1:47321/library/open", {
         method: "POST",

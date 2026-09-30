@@ -84,6 +84,13 @@
 
   function renderToolMenu() {
     const menu = document.getElementById("tool-menu");
+    // 没有本机服务时（手机、托管地址）「启动外部程序」根本跑不了，整个入口收起来
+    if (typeof Nav.isLocal === "function" && !Nav.isLocal()) {
+      const toggle = document.getElementById("tool-menu-toggle");
+      if (toggle) toggle.hidden = true;
+      menu.hidden = true;
+      return;
+    }
     menu.innerHTML = "";
     const tools = Workbench.meta.tools || [];
     if (tools.length === 0) {

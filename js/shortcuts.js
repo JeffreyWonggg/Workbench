@@ -126,6 +126,10 @@
       window.open(path, "_blank", "noopener");
       return;
     }
+    if (typeof Nav.isLocal === "function" && !Nav.isLocal()) {
+      Nav.toast("打开本机文件需要在电脑上打开工作台");
+      return;
+    }
     try {
       const response = await fetch(HOST + "/open", {
         method: "POST",

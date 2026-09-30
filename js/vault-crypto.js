@@ -102,5 +102,23 @@
     return encryptWithKey(key, data, settings);
   }
 
-  root.VaultCrypto = { create, unlock, encrypt, validateEnvelope };
+  // 用已经派生好的密钥直接解一个信封。同步时每个单元都要单独解密，
+  // 走 unlock 会为每个单元重跑一遍 PBKDF2，慢到没法用。
+  async function decrypt(key, envelope) {
+    if (!key) throw new Error("资料库尚未解锁");
+    try {
+      validateEnvelope(envelope);
+      const plaintext = await root.crypto.subtle.decrypt(
+        { name: "AES-GCM", iv: fromBase64(envelope.iv) },
+        key,
+        fromBase64(envelope.ciphertext)
+      );
+      return JSON.parse(decoder.decode(plaintext));
+    } catch (err) {
+      if (err && err.message === "资料库文件格式不受支持") throw err;
+      throw new Error("无法解密，密钥不匹配或内容已损坏");
+    }
+  }
+
+  root.VaultCrypto = { create, unlock, encrypt, decrypt, validateEnvelope };
 })(typeof window !== "undefined" ? window : globalThis);
