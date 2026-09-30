@@ -1,0 +1,30 @@
+# 换行策略：写进仓库，保证任何机器克隆出来行为一致
+#
+# 本机 Git for Windows 默认 core.autocrlf=true，会在检出时把 LF 换成 CRLF，
+# 于是 git add 时会不停提示 "LF will be replaced by CRLF"。这里显式声明策略，
+# 提示就不再出现，仓库里始终存 LF。
+
+* text=auto eol=lf
+
+# Windows 批处理和 PowerShell 脚本用 CRLF（cmd 对 LF 结尾的批处理容错较差）
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# 二进制文件：禁止任何换行/编码处理
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.wasm binary
+*.db binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.exe binary
+*.dll binary
+*.zip binary
+*.7z binary
+*.pdf binary

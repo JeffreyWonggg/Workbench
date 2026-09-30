@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>更新软件版本</title>
+  <meta name="color-scheme" content="dark light">
+  <link rel="preload" href="fonts/inter-latin-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/jetbrains-mono-latin-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="css/app.css">
+  <script>try{document.documentElement.dataset.theme=localStorage.getItem("wb-theme")||"light"}catch(e){document.documentElement.dataset.theme="light"}</script>
+</head>
+<body>
+  <div id="shell">
+    <aside id="sidebar"></aside>
+    <main id="main">
+      <div id="gate" hidden></div>
+      <div id="content" hidden>
+        <header class="page-head">
+          <div>
+            <p class="kicker">发布</p>
+            <h1>更新软件版本</h1>
+          </div>
+          <div class="row-actions">
+            <button type="button" id="version-add" class="btn">添加项目</button>
+            <button type="button" id="version-preview" class="btn">全部预览</button>
+            <button type="button" id="version-publish" class="btn primary">全部发布</button>
+            <button type="button" id="version-save" class="btn">保存</button>
+          </div>
+        </header>
+
+        <div class="config-bar">
+          <span class="config-bar-label">配置文件</span>
+          <code id="version-ini-path" class="config-bar-path"></code>
+          <span id="version-ini-missing" class="config-bar-warn" hidden></span>
+          <div class="config-bar-actions">
+            <button type="button" id="config-open-folder" class="btn" hidden>打开所在文件夹</button>
+            <button type="button" id="config-edit" class="btn">更改…</button>
+          </div>
+        </div>
+
+        <p class="version-note version-note-tip">发布按项目顺序执行，遇到第一个问题就整体停下；中断前已完成的复制不会回滚。</p>
+        <div id="version-list" class="version-list"></div>
+      </div>
+    </main>
+  </div>
+
+  <dialog id="config-dialog" class="config-dialog">
+    <form id="config-form">
+      <h2>配置文件位置</h2>
+      <p class="sub">读取、保存和发布都按这里的路径操作 UpdateVersion.ini。位置完全由你指定，程序不会自己去找。</p>
+      <div class="form-grid">
+        <label class="wide">
+          <span>UpdateVersion.ini</span>
+          <input id="config-ini" type="text" autocomplete="off" placeholder="D:\...\UpdateVersion.ini">
+        </label>
+      </div>
+      <div class="config-browse-row">
+        <button id="config-browse" class="btn" type="button">浏览…</button>
+        <span class="muted" id="config-browse-hint">打开 Windows 文件对话框选择，选完自动回填；也可以直接粘贴完整路径</span>
+        <button id="config-browse-inline" class="linkish" type="button">页面内浏览</button>
+      </div>
+      <p id="config-error" class="vault-error" hidden></p>
+      <div class="dialog-actions">
+        <span class="dialog-spacer"></span>
+        <button id="config-cancel" class="btn" type="button">取消</button>
+        <button class="btn primary" type="submit">保存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="publish-dialog" class="publish-dialog">
+    <h2 id="publish-title">发布结果</h2>
+    <p class="sub" id="publish-summary"></p>
+    <div id="publish-report" class="publish-report"></div>
+    <div class="dialog-actions">
+      <span class="dialog-spacer"></span>
+      <button id="publish-close" class="btn" type="button">关闭</button>
+    </div>
+  </dialog>
+
+  <script src="js/storage.js"></script>
+  <script src="js/model.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/version.js"></script>
+</body>
+</html>

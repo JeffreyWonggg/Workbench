@@ -1,0 +1,36 @@
+# ===== 个人数据（绝对不要提交）=====
+# 工作台的数据文件夹：待办、周报、笔记、加密资料库都在这里
+notes/
+# 加密资料库的密文与备份（即使在 notes/ 之外也一并挡住）
+vault.json
+vault.backup.json
+# 局域网传文件收下来的东西
+lan/
+# 剪贴板历史（含你复制过的内容，可能包含密码）
+clipboard-history.json
+# 本机记录的自建产品目录
+catalog.db
+
+# ===== 密钥（绝对不要提交）=====
+js/openrouter.local.js
+
+# ===== 本机配置与缓存（换机器会自己重建）=====
+workbench.config.json
+
+# ===== 从服务器同步来的索引库（几十 MB，随时可重新同步）=====
+otdr_index.db
+*.db
+
+# ===== 编译产物（用 scripts/build-host.ps1 重新编译）=====
+scripts/workbench-host.exe
+scripts/workbench-host.exe.bak
+scripts/workbench-host.prev.exe
+*.pdb
+
+# ===== 编辑器 / 系统 =====
+.vscode/
+.idea/
+.codebuddy/
+Thumbs.db
+desktop.ini
+*.swp

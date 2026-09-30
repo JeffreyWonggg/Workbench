@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>笔记</title>
+  <meta name="color-scheme" content="dark light">
+  <link rel="preload" href="fonts/inter-latin-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/jetbrains-mono-latin-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="css/app.css">
+  <script>try{document.documentElement.dataset.theme=localStorage.getItem("wb-theme")||"light"}catch(e){document.documentElement.dataset.theme="light"}</script>
+</head>
+<body>
+  <div id="shell">
+    <aside id="sidebar"></aside>
+    <main id="main">
+      <div id="gate" hidden></div>
+      <div id="content" hidden>
+        <header class="page-head">
+          <div>
+            <p class="kicker">笔记</p>
+            <h1>笔记</h1>
+          </div>
+          <button type="button" id="new-note" class="btn primary">新建</button>
+        </header>
+        <div class="notes-layout">
+          <div class="card notes-list-card">
+            <div class="card-head">
+              <h2>全部笔记</h2>
+              <span id="note-count" class="muted"></span>
+            </div>
+            <div class="note-search">
+              <svg class="ico" aria-hidden="true"><use href="#i-search"></use></svg>
+              <input id="note-search" type="text" placeholder="搜索标题和正文" aria-label="搜索标题和正文">
+            </div>
+            <div id="note-list"></div>
+          </div>
+          <div class="card editor-card">
+            <div id="editor-empty" class="empty">
+              <svg class="ico" aria-hidden="true"><use href="#i-notes"></use></svg>
+              <p>选一篇笔记，或新建一篇</p>
+            </div>
+            <form id="editor-form" hidden>
+              <input id="note-title" type="text" placeholder="标题" aria-label="标题">
+              <div class="editor-meta">
+                <select id="note-project" aria-label="项目"></select>
+                <label class="check"><input type="checkbox" id="note-pin"> 置顶</label>
+                <span id="save-state" class="muted"></span>
+                <div class="table-insert">
+                  <button type="button" id="note-table" class="btn" aria-expanded="false" aria-haspopup="true">表格</button>
+                  <div id="table-picker" class="table-picker" hidden>
+                    <div id="table-grid" class="table-grid"></div>
+                    <p id="table-size" class="table-size">选择行列</p>
+                  </div>
+                </div>
+                <button type="button" id="delete-note" class="btn danger">删除</button>
+              </div>
+              <div id="editor-pane" class="editor-pane">
+                <textarea id="note-body" hidden></textarea>
+                <div id="note-live" class="note-live" aria-label="笔记正文"></div>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+  <script src="js/storage.js"></script>
+  <script src="js/model.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/notes.js"></script>
+</body>
+</html>

@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>周报</title>
+  <meta name="color-scheme" content="dark light">
+  <link rel="preload" href="fonts/inter-latin-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/jetbrains-mono-latin-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="css/app.css">
+  <script>try{document.documentElement.dataset.theme=localStorage.getItem("wb-theme")||"light"}catch(e){document.documentElement.dataset.theme="light"}</script>
+</head>
+<body>
+  <div id="shell">
+    <aside id="sidebar"></aside>
+    <main id="main">
+      <div id="gate" hidden></div>
+      <div id="content" hidden>
+        <header class="page-head">
+          <div>
+            <p class="kicker">周报</p>
+            <h1 id="week-title">本周</h1>
+            <p class="sub" id="week-range"></p>
+          </div>
+          <p class="sub polish-usage" id="polish-usage" hidden></p>
+          <div class="seg" role="group" aria-label="切换周">
+            <button type="button" id="prev-week" class="seg-btn">上一周</button>
+            <button type="button" id="this-week" class="seg-btn">本周</button>
+            <button type="button" id="next-week" class="seg-btn">下一周</button>
+          </div>
+        </header>
+        <div class="row-actions">
+          <button type="button" id="add-section" class="btn">添加项目</button>
+          <button type="button" id="fill-done" class="btn">从本周已完成待办填入</button>
+          <button type="button" id="copy-md" class="btn primary">复制 Markdown</button>
+          <select id="polish-model" aria-label="润色模型"></select>
+          <select id="polish-mode" aria-label="润色力度"></select>
+          <button type="button" id="polish-prompt" class="btn">提示词</button>
+          <button type="button" id="polish-report" class="btn">润色 / 扩写</button>
+          <span id="hours-total" class="muted"></span>
+        </div>
+        <div id="sections"></div>
+        <dialog id="prompt-dialog" class="polish-dialog">
+          <h2>润色提示词</h2>
+          <p class="sub">默认就是现在这套。保存后下次润色会用你改过的版本。<code>{{要求}}</code> 会换成当前力度，<code>{{周报}}</code> 会换成本周原文。</p>
+          <textarea id="prompt-editor" aria-label="润色提示词" spellcheck="false"></textarea>
+          <div class="dialog-actions">
+            <button type="button" id="prompt-reset" class="btn">恢复默认</button>
+            <span class="dialog-spacer"></span>
+            <button type="button" id="prompt-cancel" class="btn">取消</button>
+            <button type="button" id="prompt-save" class="btn primary">保存</button>
+          </div>
+        </dialog>
+        <dialog id="polish-dialog" class="polish-dialog">
+          <h2>确认润色结果</h2>
+          <p class="sub">确认后会写回本周周报。可以先改文字，再点采用。</p>
+          <textarea id="polish-result" aria-label="润色结果"></textarea>
+          <div class="dialog-actions">
+            <button type="button" id="polish-cancel" class="btn">取消</button>
+            <button type="button" id="polish-apply" class="btn primary">采用</button>
+          </div>
+        </dialog>
+      </div>
+    </main>
+  </div>
+  <script src="js/storage.js"></script>
+  <script src="js/model.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/openrouter.local.js"></script>
+  <script src="js/weekly.js"></script>
+</body>
+</html>

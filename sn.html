@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>产品目录查询</title>
+  <meta name="color-scheme" content="dark light">
+  <link rel="preload" href="fonts/inter-latin-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/jetbrains-mono-latin-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="css/app.css">
+  <script>try{document.documentElement.dataset.theme=localStorage.getItem("wb-theme")||"light"}catch(e){document.documentElement.dataset.theme="light"}</script>
+</head>
+<body>
+  <div id="shell">
+    <aside id="sidebar"></aside>
+    <main id="main">
+      <div id="gate" hidden></div>
+      <div id="content" hidden>
+        <header class="page-head">
+          <div>
+            <p class="kicker">产品目录查询</p>
+            <h1>产品目录查询</h1>
+            <p class="sub">按序列号查索引库，也可以查自己维护的目录。</p>
+            <p id="sn-status" class="sub">还没有读取数据库。</p>
+          </div>
+          <div class="sn-actions">
+            <button type="button" id="sn-pick" class="btn primary">更新数据库</button>
+          </div>
+        </header>
+        <form id="sn-form" class="card sn-form">
+          <input id="sn-input" type="text" autocomplete="off" placeholder="输入 SN" aria-label="产品目录查询" required>
+          <button class="btn primary" type="submit">打开</button>
+        </form>
+        <div id="sn-results" class="card resource-table-card" hidden>
+          <div class="resource-table-wrap">
+            <table class="resource-table">
+              <thead>
+                <tr>
+                  <th>SN</th>
+                  <th>PN</th>
+                  <th>项目</th>
+                  <th>路径</th>
+                  <th>来源</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="sn-body"></tbody>
+            </table>
+          </div>
+        </div>
+        <section class="card catalog-card">
+          <div class="catalog-head">
+            <div>
+              <h2>自建目录</h2>
+              <p id="catalog-status" class="sub">存在本机的 catalog.db，和索引库分开。</p>
+            </div>
+            <button type="button" id="catalog-add" class="btn primary">添加</button>
+          </div>
+          <div id="catalog-filters" class="catalog-filters">
+            <label>
+              <span>PN</span>
+              <select id="catalog-filter-pn"></select>
+            </label>
+            <label>
+              <span>项目</span>
+              <select id="catalog-filter-project"></select>
+            </label>
+          </div>
+          <div id="catalog-wrap" class="resource-table-wrap">
+            <table class="resource-table">
+              <thead>
+                <tr>
+                  <th>SN</th>
+                  <th>PN</th>
+                  <th>项目</th>
+                  <th>路径</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="catalog-body"></tbody>
+            </table>
+          </div>
+          <div id="catalog-empty" class="empty">还没有自建记录。</div>
+        </section>
+      </div>
+    </main>
+  </div>
+  <dialog id="catalog-dialog" class="resource-dialog">
+    <form id="catalog-form">
+      <h2 id="catalog-dialog-title">添加记录</h2>
+      <div class="resource-form-grid">
+        <label>
+          <span>SN</span>
+          <input id="catalog-sn" type="text" required autocomplete="off">
+        </label>
+        <label>
+          <span>PN</span>
+          <input id="catalog-pn" type="text" autocomplete="off">
+        </label>
+        <label>
+          <span>项目</span>
+          <select id="catalog-project"></select>
+        </label>
+        <label class="resource-wide">
+          <span>路径</span>
+          <input id="catalog-path" type="text" required autocomplete="off" placeholder="文件夹或文件的完整路径">
+        </label>
+      </div>
+      <div class="dialog-actions">
+        <button id="catalog-cancel" class="btn" type="button">取消</button>
+        <span class="dialog-spacer"></span>
+        <button class="btn primary" type="submit">保存</button>
+      </div>
+    </form>
+  </dialog>
+  <script src="js/storage.js"></script>
+  <script src="js/model.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/vendor/sql-wasm.js"></script>
+  <script src="js/sn.js"></script>
+</body>
+</html>

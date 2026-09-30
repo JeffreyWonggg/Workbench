@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>代码</title>
+  <meta name="color-scheme" content="dark light">
+  <link rel="preload" href="fonts/inter-latin-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/jetbrains-mono-latin-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="css/app.css">
+  <script>try{document.documentElement.dataset.theme=localStorage.getItem("wb-theme")||"light"}catch(e){document.documentElement.dataset.theme="light"}</script>
+</head>
+<body>
+  <div id="shell">
+    <aside id="sidebar"></aside>
+    <main id="main">
+      <div id="gate" hidden></div>
+      <div id="content" hidden>
+        <header class="page-head">
+          <div>
+            <p class="kicker">代码</p>
+            <h1 id="code-summary">代码</h1>
+          </div>
+          <div class="row-actions">
+            <button type="button" id="code-roots" class="btn">代码目录</button>
+            <button type="button" id="code-scan" class="btn">
+              <svg class="ico" aria-hidden="true"><use href="#i-search"></use></svg>扫描仓库
+            </button>
+            <button type="button" id="code-refresh" class="btn primary">
+              <svg class="ico" aria-hidden="true"><use href="#i-refresh"></use></svg>刷新
+            </button>
+          </div>
+        </header>
+
+        <p id="code-notice" class="code-notice" hidden></p>
+
+        <div class="code-layout">
+          <aside class="card code-side">
+            <div class="code-search-row">
+              <input id="repo-search" type="search" placeholder="搜索仓库" autocomplete="off" aria-label="搜索仓库">
+            </div>
+            <div id="repo-filter" class="repo-filter" hidden></div>
+            <div id="repo-list" class="repo-list"></div>
+            <p id="repo-empty" class="empty" hidden>还没有仓库。先点「代码目录」选一个代码根目录，再点「扫描仓库」。</p>
+          </aside>
+
+          <section class="card code-main">
+            <div class="code-head">
+              <div class="code-head-title">
+                <h2 id="repo-name">未选择仓库</h2>
+                <p id="repo-meta" class="muted"></p>
+              </div>
+              <div class="code-head-actions">
+                <label class="code-bind">
+                  <span>项目</span>
+                  <select id="repo-project" aria-label="绑定项目"></select>
+                </label>
+                <a id="repo-release" class="btn" href="version.html">发布配置</a>
+                <button type="button" id="repo-remote" class="btn">远端</button>
+                <button type="button" id="repo-fetch" class="btn">
+                  <svg class="ico" aria-hidden="true"><use href="#i-download"></use></svg>获取
+                </button>
+                <button type="button" id="repo-pull" class="btn">拉取</button>
+                <button type="button" id="repo-push" class="btn">
+                  <svg class="ico" aria-hidden="true"><use href="#i-upload"></use></svg>推送
+                </button>
+              </div>
+            </div>
+
+            <div class="seg code-tabs" id="code-tabs" role="tablist">
+              <button type="button" class="seg-btn on" data-tab="changes" role="tab" aria-selected="true">改动</button>
+              <button type="button" class="seg-btn" data-tab="log" role="tab" aria-selected="false">历史</button>
+              <button type="button" class="seg-btn" data-tab="branches" role="tab" aria-selected="false">分支</button>
+              <button type="button" class="seg-btn" data-tab="tags" role="tab" aria-selected="false">标签</button>
+              <button type="button" class="seg-btn" data-tab="software" role="tab" aria-selected="false">软件号</button>
+            </div>
+
+            <div class="tab-panel" id="panel-changes">
+              <div class="code-bar">
+                <label class="check">
+                  <input type="checkbox" id="select-all">全选
+                </label>
+                <button type="button" id="stage-selected" class="btn">暂存所选</button>
+                <button type="button" id="unstage-selected" class="btn">取消暂存</button>
+                <button type="button" id="stage-all" class="btn">暂存全部</button>
+                <button type="button" id="discard-selected" class="btn danger">放弃改动</button>
+                <span id="changes-count" class="muted"></span>
+              </div>
+              <div id="change-list" class="change-list"></div>
+              <div class="commit-box">
+                <textarea id="commit-message" rows="3" placeholder="提交说明（第一行当标题，空一行后写正文）"></textarea>
+                <div class="code-bar">
+                  <button type="button" id="commit" class="btn primary">提交已暂存</button>
+                  <button type="button" id="commit-amend" class="btn">修改上一条</button>
+                  <span class="dialog-spacer"></span>
+                  <button type="button" id="stash" class="btn">搁置改动</button>
+                  <button type="button" id="stash-pop" class="btn">取回搁置</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="tab-panel" id="panel-log" hidden>
+              <div id="commit-list" class="plain-list"></div>
+              <button type="button" id="log-more" class="btn" hidden>加载更多</button>
+            </div>
+
+            <div class="tab-panel" id="panel-branches" hidden>
+              <div class="code-bar">
+                <input id="new-branch" type="text" placeholder="新分支名，例如 feature/xxx" aria-label="新分支名">
+                <button type="button" id="create-branch" class="btn primary">新建并切换</button>
+              </div>
+              <h3 class="sub-head">本地分支</h3>
+              <div id="branch-local" class="plain-list"></div>
+              <h3 class="sub-head">远程分支</h3>
+              <div id="branch-remote" class="plain-list"></div>
+            </div>
+
+            <div class="tab-panel" id="panel-tags" hidden>
+              <div class="code-bar">
+                <input id="new-tag" type="text" placeholder="新标签，例如 v1.2.0" aria-label="新标签名">
+                <input id="new-tag-message" type="text" placeholder="标签说明（可选）" aria-label="标签说明">
+                <button type="button" id="create-tag" class="btn primary">打标签</button>
+              </div>
+              <h3 class="sub-head">发布流水</h3>
+              <div id="release-list" class="plain-list"></div>
+              <div id="tag-list" class="plain-list"></div>
+            </div>
+
+            <div class="tab-panel" id="panel-software" hidden>
+              <div class="code-bar">
+                <input id="software-search" type="search" placeholder="搜索名称 / 软件号 / 项目" aria-label="搜索软件号">
+                <button type="button" id="software-add" class="btn primary">新增软件号</button>
+                <button type="button" id="software-deleted" class="btn" hidden></button>
+              </div>
+              <div id="software-list" class="plain-list"></div>
+            </div>
+
+            <div class="diff-view" id="diff-view" hidden>
+              <div class="diff-head">
+                <span id="diff-title" class="diff-title"></span>
+                <span class="dialog-spacer"></span>
+                <button type="button" id="diff-close" class="btn">关闭</button>
+              </div>
+              <pre id="diff-body" class="diff-body"></pre>
+            </div>
+          </section>
+        </div>
+
+        <details class="card code-output" id="code-output">
+          <summary>
+            <span>执行输出</span>
+            <span id="output-hint" class="muted"></span>
+          </summary>
+          <div id="output-body" class="output-body"></div>
+        </details>
+      </div>
+    </main>
+  </div>
+
+  <dialog id="roots-dialog" class="code-dialog">
+    <form id="roots-form">
+      <h2>代码目录</h2>
+      <p class="sub">扫描这些目录下的 git 仓库：最多下探 6 层，命中仓库就不再往里钻，跳过 node_modules / bin / obj 这类目录。</p>
+      <div id="root-list" class="plain-list"></div>
+      <div class="dialog-actions">
+        <button type="button" id="root-add" class="btn primary">添加代码根目录…</button>
+        <span class="dialog-spacer"></span>
+        <button type="button" id="roots-close" class="btn">完成</button>
+      </div>
+      <p id="roots-error" class="vault-error" hidden></p>
+    </form>
+  </dialog>
+
+  <dialog id="remote-dialog" class="code-dialog">
+    <form id="remote-form">
+      <h2>设置远端</h2>
+      <p class="sub">首次推送前必须先有远端地址。填仓库地址（新建的空仓库也行），例如
+        <code>https://github.com/你的名字/Workbench.git</code>。
+        保存后点「推送」即可。</p>
+      <label class="field">
+        <span>远端地址（origin）</span>
+        <input id="remote-url" type="text" placeholder="https://github.com/用户名/仓库.git" autocomplete="off" spellcheck="false">
+      </label>
+      <p id="remote-error" class="vault-error" hidden></p>
+      <p id="remote-current" class="muted"></p>
+      <div class="dialog-actions">
+        <span class="dialog-spacer"></span>
+        <button type="button" id="remote-cancel" class="btn">取消</button>
+        <button type="submit" id="remote-save" class="btn primary">保存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="confirm-dialog" class="code-dialog">
+    <form id="confirm-form">
+      <h2 id="confirm-title">确认操作</h2>
+      <p id="confirm-text" class="sub"></p>
+      <pre id="confirm-command" class="confirm-command"></pre>
+      <div class="dialog-actions">
+        <span class="dialog-spacer"></span>
+        <button type="button" id="confirm-cancel" class="btn">取消</button>
+        <button type="button" id="confirm-ok" class="btn danger">执行</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="software-dialog" class="code-dialog">
+    <form id="software-form">
+      <h2 id="software-title">新增软件号</h2>
+      <div class="form-grid">
+        <label>
+          <span>名称</span>
+          <input id="software-name" type="text" required autocomplete="off">
+        </label>
+        <label>
+          <span>软件号</span>
+          <input id="software-id" type="text" autocomplete="off">
+        </label>
+        <label>
+          <span>项目</span>
+          <select id="software-project"></select>
+        </label>
+        <label>
+          <span>备注</span>
+          <input id="software-notes" type="text" autocomplete="off">
+        </label>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" id="software-delete" class="btn danger" hidden>删除</button>
+        <span class="dialog-spacer"></span>
+        <button type="button" id="software-cancel" class="btn">取消</button>
+        <button type="submit" class="btn primary">保存</button>
+      </div>
+      <p id="software-error" class="vault-error" hidden></p>
+    </form>
+  </dialog>
+
+  <script src="js/storage.js"></script>
+  <script src="js/model.js"></script>
+  <script src="js/gitapi.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/code.js"></script>
+</body>
+</html>

@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>资料库</title>
+  <meta name="color-scheme" content="dark light">
+  <link rel="preload" href="fonts/inter-latin-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/jetbrains-mono-latin-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="css/app.css">
+  <script>try{document.documentElement.dataset.theme=localStorage.getItem("wb-theme")||"light"}catch(e){document.documentElement.dataset.theme="light"}</script>
+</head>
+<body>
+  <div id="shell">
+    <aside id="sidebar"></aside>
+    <main id="main">
+      <div id="gate" hidden></div>
+      <div id="content" hidden>
+        <header class="page-head">
+          <div>
+            <p class="kicker">资料库</p>
+            <h1>资料库</h1>
+          </div>
+          <div class="row-actions" id="vault-head-actions" hidden>
+            <button type="button" id="vault-security" class="btn">安全设置</button>
+            <button type="button" id="vault-lock" class="btn">锁定</button>
+          </div>
+        </header>
+
+        <section id="vault-gate" class="card vault-gate" hidden>
+          <div id="vault-auto-box" hidden>
+            <h2>正在解锁…</h2>
+            <p class="sub">正在用这台电脑记住的主密码打开资料库。</p>
+          </div>
+
+          <form id="vault-unlock-form" hidden>
+            <h2>资料库已加密</h2>
+            <p class="sub">输入主密码解锁。密码只在内存中使用，不会写入数据文件夹。</p>
+            <label class="vault-field">
+              <span>主密码</span>
+              <input id="vault-unlock-password" type="password" autocomplete="current-password" required>
+            </label>
+            <label class="check vault-remember">
+              <input type="checkbox" id="vault-remember" checked> 在这台电脑上记住主密码
+            </label>
+            <p class="sub vault-note">记住后这台电脑打开资料库不再问密码；把数据文件夹拷到别的电脑仍然需要输入。</p>
+            <p id="vault-unlock-error" class="vault-error" hidden></p>
+            <div class="dialog-actions">
+              <button id="vault-reset" class="btn danger" type="button">忘记主密码</button>
+              <span class="dialog-spacer"></span>
+              <button class="btn primary" type="submit">解锁</button>
+            </div>
+          </form>
+
+          <form id="vault-setup-form" hidden>
+            <h2 id="vault-setup-title">启用加密资料库</h2>
+            <p class="sub" id="vault-setup-hint"></p>
+            <label class="vault-field">
+              <span>主密码</span>
+              <input id="vault-setup-password" type="password" autocomplete="new-password" required>
+            </label>
+            <label class="vault-field">
+              <span>再输一次</span>
+              <input id="vault-setup-password2" type="password" autocomplete="new-password" required>
+            </label>
+            <label class="check vault-remember">
+              <input type="checkbox" id="vault-remember-setup" checked> 在这台电脑上记住主密码
+            </label>
+            <p id="vault-setup-error" class="vault-error" hidden></p>
+            <div class="dialog-actions">
+              <span class="dialog-spacer"></span>
+              <button class="btn primary" type="submit">创建</button>
+            </div>
+          </form>
+        </section>
+
+        <section id="vault-app" hidden>
+          <div id="software-migrate" class="migrate-bar" hidden>
+            <p id="software-migrate-text"></p>
+            <button id="software-migrate-go" class="btn primary" type="button">全部迁到代码页</button>
+          </div>
+          <div class="filters">
+            <div id="resource-projects" class="chips" aria-label="项目"></div>
+            <div id="resource-types" class="chips" aria-label="资料类型"></div>
+          </div>
+          <div class="vault-toolbar">
+            <div class="vault-toolbar-actions">
+              <input id="resource-search" type="text" placeholder="搜索资料" aria-label="搜索资料">
+              <button id="library-pick" class="btn" type="button" hidden>选择文件夹</button>
+              <button id="library-open-root" class="btn" type="button" hidden>打开文件夹</button>
+              <button id="library-refresh" class="btn" type="button" hidden>刷新</button>
+              <button id="resource-add" class="btn primary" type="button">新建资料</button>
+            </div>
+          </div>
+          <div id="resource-table-card" class="card resource-table-card">
+            <div id="library-bar" hidden>
+              <p id="library-root" class="library-root"></p>
+              <nav id="library-crumbs" class="library-crumbs" aria-label="文件夹路径"></nav>
+            </div>
+            <div id="resource-table-wrap" class="resource-table-wrap">
+              <table class="resource-table">
+                <thead id="resource-head"></thead>
+                <tbody id="resource-body"></tbody>
+              </table>
+            </div>
+            <div id="library-table-wrap" class="resource-table-wrap" hidden>
+              <table class="resource-table library-table">
+                <thead>
+                  <tr>
+                    <th>名称</th>
+                    <th>类型</th>
+                    <th>大小</th>
+                    <th>修改时间</th>
+                    <th>项目</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="library-body"></tbody>
+              </table>
+            </div>
+            <div id="resource-empty" class="empty" hidden>还没有这一类资料。</div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <dialog id="resource-dialog" class="resource-dialog">
+    <form id="resource-form">
+      <h2 id="resource-dialog-title">新建资料</h2>
+      <div class="resource-form-grid">
+        <label>
+          <span>类型</span>
+          <select id="resource-type">
+            <option value="credential">账号</option>
+            <option value="path">路径</option>
+            <option value="host">主机</option>
+          </select>
+        </label>
+        <label>
+          <span>名称</span>
+          <input id="resource-name" type="text" required>
+        </label>
+        <label class="resource-field" data-types="credential">
+          <span>账号</span>
+          <input id="resource-username" type="text" autocomplete="off">
+        </label>
+        <label class="resource-field" data-types="credential">
+          <span>密码</span>
+          <input id="resource-secret" type="password" autocomplete="new-password">
+        </label>
+        <label class="resource-field resource-wide" data-types="path">
+          <span>文件夹或网址</span>
+          <input id="resource-path" type="text" placeholder="\\server\share 或 https://">
+        </label>
+        <label class="resource-field" data-types="host">
+          <span>IP 或主机名</span>
+          <input id="resource-host" type="text">
+        </label>
+        <label class="resource-field" data-types="software">
+          <span>软件号</span>
+          <input id="resource-software" type="text">
+        </label>
+        <label class="resource-field resource-wide" data-types="credential path host software">
+          <span>归属项目</span>
+          <select id="resource-project"></select>
+        </label>
+        <label class="resource-wide">
+          <span>备注</span>
+          <textarea id="resource-notes" rows="3"></textarea>
+        </label>
+      </div>
+      <div class="dialog-actions">
+        <button id="resource-delete" class="btn danger" type="button" hidden>删除</button>
+        <span class="dialog-spacer"></span>
+        <button id="resource-cancel" class="btn" type="button">取消</button>
+        <button class="btn primary" type="submit">保存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="vault-security-dialog" class="resource-dialog">
+    <form id="vault-password-form">
+      <h2>安全设置</h2>
+      <div class="resource-form-grid">
+        <label class="resource-wide">
+          <span>当前主密码</span>
+          <input id="vault-old-password" type="password" autocomplete="current-password">
+        </label>
+        <label>
+          <span>新主密码</span>
+          <input id="vault-password-next" type="password" autocomplete="new-password">
+        </label>
+        <label>
+          <span>再输一次</span>
+          <input id="vault-password-next2" type="password" autocomplete="new-password">
+        </label>
+      </div>
+      <p id="vault-password-error" class="vault-error" hidden></p>
+      <div class="dialog-actions">
+        <button id="vault-export" class="btn" type="button">导出明文</button>
+        <button id="vault-forget-remember" class="btn" type="button">清除本机记忆</button>
+        <span class="dialog-spacer"></span>
+        <button id="vault-security-close" class="btn" type="button">关闭</button>
+        <button class="btn primary" type="submit">修改主密码</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="js/storage.js"></script>
+  <script src="js/model.js"></script>
+  <script src="js/vault-crypto.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/resources.js"></script>
+</body>
+</html>

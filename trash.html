@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>回收站</title>
+  <meta name="color-scheme" content="dark light">
+  <link rel="preload" href="fonts/inter-latin-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/jetbrains-mono-latin-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="css/app.css">
+  <script>try{document.documentElement.dataset.theme=localStorage.getItem("wb-theme")||"light"}catch(e){document.documentElement.dataset.theme="light"}</script>
+</head>
+<body>
+  <div id="shell">
+    <aside id="sidebar"></aside>
+    <main id="main">
+      <div id="gate" hidden></div>
+      <div id="content" hidden>
+        <header class="page-head">
+          <div>
+            <p class="kicker">回收站</p>
+            <h1>回收站</h1>
+          </div>
+          <div class="row-actions" aria-label="回收站工具">
+            <button type="button" id="trash-purge" class="btn danger">清空回收站</button>
+          </div>
+        </header>
+        <p class="sub" id="trash-summary"></p>
+
+        <section id="trash-todo-card" class="card trash-card">
+          <div class="card-head">
+            <h2>待办</h2>
+            <span id="trash-todo-count" class="muted"></span>
+          </div>
+          <div id="trash-todo-list" class="trash-list"></div>
+        </section>
+
+        <section id="trash-note-card" class="card trash-card">
+          <div class="card-head">
+            <h2>笔记</h2>
+            <span id="trash-note-count" class="muted"></span>
+          </div>
+          <div id="trash-note-list" class="trash-list"></div>
+        </section>
+
+        <section id="trash-resource-card" class="card trash-card">
+          <div class="card-head">
+            <h2>资料</h2>
+            <span id="trash-resource-count" class="muted"></span>
+          </div>
+          <div id="trash-resource-list" class="trash-list"></div>
+        </section>
+      </div>
+    </main>
+  </div>
+  <script src="js/storage.js"></script>
+  <script src="js/model.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/trash.js"></script>
+</body>
+</html>

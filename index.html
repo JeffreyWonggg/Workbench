@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>工作台</title>
+  <meta name="color-scheme" content="dark light">
+  <link rel="preload" href="fonts/inter-latin-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/jetbrains-mono-latin-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="css/app.css">
+  <script>try{document.documentElement.dataset.theme=localStorage.getItem("wb-theme")||"light"}catch(e){document.documentElement.dataset.theme="light"}</script>
+</head>
+<body>
+  <div id="shell">
+    <aside id="sidebar"></aside>
+    <main id="main">
+      <div id="gate" hidden></div>
+      <div id="content" hidden>
+        <header class="page-head">
+          <div>
+            <p class="kicker" id="week-kicker"></p>
+            <h1>工作台</h1>
+          </div>
+          <div class="row-actions" aria-label="工具栏">
+            <div class="tool-wrap">
+              <button type="button" id="tool-menu-toggle" class="btn primary" aria-expanded="false" aria-haspopup="true">
+                <svg class="ico" aria-hidden="true"><use href="#i-run"></use></svg>
+                工具
+              </button>
+              <div id="tool-menu" class="tool-menu" hidden></div>
+            </div>
+          </div>
+        </header>
+        <form id="capture" class="capture card">
+          <button type="button" id="capture-toggle" class="add-toggle" aria-expanded="false" aria-controls="capture-fields">
+            <svg class="ico" aria-hidden="true"><use href="#i-plus"></use></svg>
+            <span>记一条</span>
+          </button>
+          <div id="capture-fields" class="capture-fields" hidden>
+            <select id="capture-project" aria-label="项目"></select>
+            <input id="capture-text" type="text" autocomplete="off" placeholder="写一条正在做的事，回车收下">
+            <button class="btn primary" type="submit">收下</button>
+          </div>
+        </form>
+        <section id="focus-card" class="card focus-card" hidden>
+          <div class="card-head">
+            <h2>今天要做的</h2>
+            <a href="todo.html">全部待办</a>
+          </div>
+          <div id="focus-list" class="focus-list"></div>
+        </section>
+        <div class="home-grid">
+          <section class="card">
+            <div class="card-head">
+              <h2>进行中</h2>
+              <a href="todo.html">全部待办</a>
+            </div>
+            <div id="doing-list"></div>
+          </section>
+          <section class="card">
+            <div class="card-head">
+              <h2>本周周报</h2>
+              <a href="weekly.html?week=current">去写</a>
+            </div>
+            <div id="week-box"></div>
+          </section>
+          <section class="card">
+            <div class="card-head">
+              <h2>最近笔记</h2>
+              <a href="notes.html">全部笔记</a>
+            </div>
+            <div id="note-box"></div>
+          </section>
+        </div>
+      </div>
+    </main>
+  </div>
+  <dialog id="tool-dialog" class="tool-dialog">
+    <form id="tool-form">
+      <h2>工具</h2>
+      <p class="sub">这里的按钮会启动本机程序。清单保存在数据文件夹的 meta.json 里，换机器或加工具都不用改程序。</p>
+      <div id="tool-rows"></div>
+      <p id="tool-error" class="vault-error" hidden></p>
+      <div class="dialog-actions">
+        <button id="tool-add" class="btn" type="button">添加一项</button>
+        <span class="dialog-spacer"></span>
+        <button id="tool-cancel" class="btn" type="button">取消</button>
+        <button class="btn primary" type="submit">保存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="js/storage.js"></script>
+  <script src="js/model.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/home.js"></script>
+</body>
+</html>
