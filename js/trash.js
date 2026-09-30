@@ -195,7 +195,12 @@
   async function purgeTodo(id) {
     const todo = todos.find((item) => item.id === id);
     if (!todo) return;
-    if (!confirm(`彻底删除「${todo.title || "未命名"}」？不可恢复。`)) return;
+    if (!(await Nav.ask({
+      title: "彻底删除",
+      text: `「${todo.title || "未命名"}」会从回收站永久删除，无法恢复。`,
+      okText: "彻底删除",
+      danger: true
+    }))) return;
     todos = todos.filter((item) => item.id !== id);
     await Workbench.saveTodos(todos);
     Nav.refreshBadges();
@@ -226,7 +231,12 @@
   async function purgeRecipe(id) {
     const recipe = recipes.find((item) => item.id === id);
     if (!recipe) return;
-    if (!confirm(`彻底删除「${recipe.name || "未命名"}」？不可恢复。`)) return;
+    if (!(await Nav.ask({
+      title: "彻底删除",
+      text: `「${recipe.name || "未命名"}」会从回收站永久删除，无法恢复。`,
+      okText: "彻底删除",
+      danger: true
+    }))) return;
     recipes = recipes.filter((item) => item.id !== id);
     await Workbench.saveRecipes(recipes);
     render();
@@ -236,7 +246,12 @@
   async function purgeNote(id) {
     const note = notes.find((item) => item.id === id);
     if (!note) return;
-    if (!confirm(`彻底删除「${note.title || "未命名"}」？正文文件会一起删除，不可恢复。`)) return;
+    if (!(await Nav.ask({
+      title: "彻底删除",
+      text: `「${note.title || "未命名"}」会从回收站永久删除，正文文件也一起删掉，无法恢复。`,
+      okText: "彻底删除",
+      danger: true
+    }))) return;
     await Workbench.deleteNote(id);
     notes = await Workbench.loadNoteIndex();
     render();
@@ -255,7 +270,12 @@
     if (todoRows.length) parts.push(`${todoRows.length} 条待办`);
     if (noteRows.length) parts.push(`${noteRows.length} 篇笔记`);
     if (recipeRows.length) parts.push(`${recipeRows.length} 道菜谱`);
-    if (!confirm(`彻底删除 ${parts.join("、")}？不可恢复。`)) return;
+    if (!(await Nav.ask({
+      title: "清空回收站",
+      text: `${parts.join("、")}会永久删除，无法恢复。`,
+      okText: "全部删除",
+      danger: true
+    }))) return;
     todos = Workbench.activeItems(todos);
     await Workbench.saveTodos(todos);
     for (const note of noteRows) {

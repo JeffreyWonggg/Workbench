@@ -7,7 +7,7 @@
   const DEFAULTS = {
     name: "工作台",
     description: "完全离线运行的个人工作台。数据保存在你自己的文件夹中。",
-    author: "Zhenhui Wang",
+    author: "Jeffrey Wong",
     version: "1.0.0",
     copyright: ""
   };

@@ -510,7 +510,13 @@
   }
 
   async function deleteCatalogRow(row) {
-    if (!catalogDb || !confirm("删除 SN「" + row.sn + "」这条自建记录？")) return;
+    if (!catalogDb) return;
+    if (!(await Nav.ask({
+      title: "删除记录",
+      text: "删除 SN「" + row.sn + "」这条自建记录？",
+      okText: "删除",
+      danger: true
+    }))) return;
     try {
       catalogDb.run("DELETE FROM catalog WHERE id = ?", [row.id]);
       await persistCatalog();

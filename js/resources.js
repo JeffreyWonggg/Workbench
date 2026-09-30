@@ -292,8 +292,13 @@
   }
 
   async function onReset() {
-    const warning = "重置会删除 vault.json 里已加密的资料，且不可恢复。\n\n确定要继续吗？";
-    if (!confirm(warning)) return;
+    const ok = await Nav.ask({
+      title: "重置资料库",
+      text: "重置会删除 vault.json 里已加密的资料，且不可恢复。\n\n确定要继续吗？",
+      okText: "重置",
+      danger: true
+    });
+    if (!ok) return;
     try {
       await Workbench.removeFile("vault.json");
       await Workbench.removeFile("vault.backup.json");
@@ -361,9 +366,14 @@
     }
   }
 
-  function exportPlain() {
+  async function exportPlain() {
     if (!vault) return;
-    if (!confirm("导出的 JSON 是明文，里面包含所有密码。确定导出吗？")) return;
+    if (!(await Nav.ask({
+      title: "导出明文",
+      text: "导出的 JSON 是明文，里面包含所有密码。确定导出吗？",
+      okText: "导出",
+      danger: true
+    }))) return;
     const blob = new Blob([JSON.stringify(vault, null, 2) + "\n"], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -1118,7 +1128,12 @@
   async function purgeRecord(id) {
     const record = vault && vault.records.find((item) => item.id === id);
     if (!record) return;
-    if (!confirm(`彻底删除「${record.name || "未命名"}」？不可恢复。`)) return;
+    if (!(await Nav.ask({
+      title: "彻底删除",
+      text: `「${record.name || "未命名"}」会永久删除，无法恢复。`,
+      okText: "彻底删除",
+      danger: true
+    }))) return;
     vault.records = vault.records.filter((item) => item.id !== id);
     try {
       await persist();
@@ -1188,9 +1203,13 @@
   async function migrateAllSoftware() {
     const records = legacySoftwareRecords();
     if (!records.length) return;
-    if (!confirm("把 " + records.length + " 条「软件号」迁到代码页？\n\n"
-      + "迁出后它们会写成明文的 software.json，不再受主密码保护。原加密库会同步移除这些条目，"
-      + "但 vault.backup.json 里仍留有一份可回滚的备份。")) return;
+    if (!(await Nav.ask({
+      title: "迁出软件号",
+      text: "把 " + records.length + " 条「软件号」迁到代码页？\n\n"
+        + "迁出后它们会写成明文的 software.json，不再受主密码保护。原加密库会同步移除这些条目，"
+        + "但 vault.backup.json 里仍留有一份可回滚的备份。",
+      okText: "迁出"
+    }))) return;
     try {
       const count = await migrateSoftware(records);
       Nav.toast("已迁出 " + count + " 条，去「代码」页的软件号页签查看");

@@ -182,11 +182,22 @@
     tools.append(
       textButton("上移", () => move(index, -1), index === 0),
       textButton("下移", () => move(index, 1), index === report.sections.length - 1),
-      textButton("删除", () => {
-        if (!confirm(`删除「${section.project || "这个项目"}」？`)) return;
-        report.sections.splice(index, 1);
+      textButton("删除", async () => {
+        const label = section.project || "这个项目";
+        const ok = await askDelete(`删除「${label}」？这一周的工时和内容会一起移除。`);
+        if (!ok) return;
+        const removed = report.sections.splice(index, 1)[0];
         renderSections();
         scheduleSave();
+        Nav.toast(`已删除「${label}」`, {
+          label: "撤销",
+          onSelect: () => {
+            // 撤销时放回原来的位置；中间若上移/下移过，位置取较小值兜底
+            report.sections.splice(Math.min(index, report.sections.length), 0, removed);
+            renderSections();
+            scheduleSave();
+          }
+        });
       })
     );
     head.append(project, hours, tools);
@@ -249,6 +260,42 @@
     button.disabled = !!disabled;
     button.addEventListener("click", onclick);
     return button;
+  }
+
+  // 删除确认：用页面里的对话框，而不是浏览器原生 confirm()——
+  // 原生弹窗是系统样式，和本项目的毛玻璃弹窗不是一套观感。
+  function askDelete(message) {
+    return new Promise((resolve) => {
+      const dialog = document.getElementById("del-dialog");
+      const form = document.getElementById("del-form");
+      const cancel = document.getElementById("del-cancel");
+      document.getElementById("del-text").textContent = message;
+
+      function finish(value) {
+        form.removeEventListener("submit", onSubmit);
+        cancel.removeEventListener("click", onCancel);
+        dialog.removeEventListener("close", onClose);
+        if (dialog.open) dialog.close();
+        resolve(value);
+      }
+      function onSubmit(event) {
+        event.preventDefault();
+        finish(true);
+      }
+      function onCancel() {
+        finish(false);
+      }
+      function onClose() {
+        // 按 Esc 关闭也按“取消”处理
+        finish(false);
+      }
+
+      form.addEventListener("submit", onSubmit);
+      cancel.addEventListener("click", onCancel);
+      dialog.addEventListener("close", onClose);
+      dialog.showModal();
+      document.getElementById("del-ok").focus();
+    });
   }
 
   function move(index, delta) {

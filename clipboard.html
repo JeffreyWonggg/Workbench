@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>剪贴板</title>
+  <meta name="color-scheme" content="dark light">
+  <link rel="preload" href="fonts/inter-latin-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/jetbrains-mono-latin-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="css/app.css">
+  <script>try{document.documentElement.dataset.theme=localStorage.getItem("wb-theme")||"light"}catch(e){document.documentElement.dataset.theme="light"}</script>
+</head>
+<body>
+  <div id="shell">
+    <aside id="sidebar"></aside>
+    <main id="main">
+      <div id="gate" hidden></div>
+      <div id="content" hidden>
+        <header class="page-head">
+          <div>
+            <p class="kicker">剪贴板</p>
+            <h1>剪贴板历史</h1>
+            <p class="sub" id="clip-count"></p>
+          </div>
+          <div class="row-actions">
+            <button type="button" id="clip-refresh" class="btn primary">
+              <svg class="ico" aria-hidden="true"><use href="#i-refresh"></use></svg>刷新
+            </button>
+          </div>
+        </header>
+
+        <p id="clip-notice" class="code-notice" hidden></p>
+
+        <div class="filters">
+          <div class="recipe-search">
+            <svg class="ico" aria-hidden="true"><use href="#i-search"></use></svg>
+            <input id="clip-search" type="search" placeholder="搜索历史里的文字…" aria-label="搜索剪贴板历史" autocomplete="off">
+          </div>
+        </div>
+
+        <div id="clip-list" class="plain-list clip-list"></div>
+      </div>
+    </main>
+  </div>
+
+  <script src="js/storage.js"></script>
+  <script src="js/model.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/clipboard.js"></script>
+</body>
+</html>

@@ -7,6 +7,8 @@
     { id: "notes", href: "notes.html", label: "笔记", icon: "notes" },
     { id: "resources", href: "resources.html", label: "资料库", icon: "resources" },
     { id: "recipes", href: "recipes.html", label: "菜谱", icon: "recipe" },
+    { id: "shortcuts", href: "shortcuts.html", label: "快捷方式", icon: "shortcut" },
+    { id: "clipboard", href: "clipboard.html", label: "剪贴板", icon: "clipboard" },
     { id: "code", href: "code.html", label: "代码", icon: "code" },
     { id: "lan", href: "lan.html", label: "局域网传文件", icon: "lan" },
     { id: "sn", href: "sn.html", label: "产品目录查询", icon: "sn" },
@@ -19,19 +21,50 @@
   // 认不出的（新版本加的页面）自动排在默认位置，删掉的不影响。
   const NAV_ORDER_KEY = "wb-nav-order";
 
-  function navPages() {
-    let saved = [];
+  // 被「设置」里关掉的页面。关掉只是不显示（侧栏和 Ctrl+K 都不出现），
+  // 页面本身还在，直接输网址照样能打开；排序位置也保留，重新打开时回到原来的位置。
+  const HIDDEN_KEY = "wb-hidden-pages";
+
+  function readIdList(key) {
     try {
-      const raw = JSON.parse(localStorage.getItem(NAV_ORDER_KEY) || "[]");
-      if (Array.isArray(raw)) saved = raw.filter((id) => PAGES.some((page) => page.id === id));
-    } catch (err) { /* 存的顺序坏了就用默认 */ }
+      const raw = JSON.parse(localStorage.getItem(key) || "[]");
+      return Array.isArray(raw) ? raw.filter((id) => PAGES.some((page) => page.id === id)) : [];
+    } catch (err) {
+      return []; // 存坏了就按默认
+    }
+  }
+
+  function writeIdList(key, ids) {
+    try { localStorage.setItem(key, JSON.stringify(ids)); } catch (err) { /* 隐私模式下存不了，只影响本次 */ }
+  }
+
+  // 全部页面的顺序（含被关掉的）：排序存的是完整列表，所以关掉再打开不会丢位置
+  function navOrder() {
+    const saved = readIdList(NAV_ORDER_KEY);
     const known = new Set(saved);
     return saved.map((id) => PAGES.find((page) => page.id === id))
       .concat(PAGES.filter((page) => !known.has(page.id)));
   }
 
+  function hiddenPages() {
+    return new Set(readIdList(HIDDEN_KEY));
+  }
+
   function saveNavOrder(pages) {
-    try { localStorage.setItem(NAV_ORDER_KEY, JSON.stringify(pages.map((page) => page.id))); } catch (err) { }
+    writeIdList(NAV_ORDER_KEY, pages.map((page) => page.id));
+  }
+
+  function setPageHidden(id, hidden) {
+    const ids = hiddenPages();
+    if (hidden) ids.add(id);
+    else ids.delete(id);
+    writeIdList(HIDDEN_KEY, Array.from(ids));
+  }
+
+  // 侧栏和命令面板里实际展示的页面
+  function navPages() {
+    const hidden = hiddenPages();
+    return navOrder().filter((page) => !hidden.has(page.id));
   }
 
   // 内联 SVG 图标，避免外部依赖。symbol 定义一次，全局用 <use> 引用。
@@ -49,6 +82,8 @@
     run: '<path d="M4 5.5h16v13H4z"/><path d="M9.5 9.2l5 2.8-5 2.8z"/>',
     code: '<circle cx="6.5" cy="6.5" r="2.4"/><circle cx="6.5" cy="17.5" r="2.4"/><circle cx="17.5" cy="12" r="2.4"/><path d="M6.5 9v6"/><path d="M8.9 6.5h2.4a3.8 3.8 0 0 1 3.8 3.8"/>',
     recipe: '<path d="M4 11.5h13a6.5 6.5 0 0 1-6.5 6.5A6.5 6.5 0 0 1 4 11.5z"/><path d="M4 11.5c0-2 1.6-3.5 3.6-3.5h5.8c2 0 3.6 1.5 3.6 3.5"/><path d="M20 6.5v11"/><path d="M2.8 20.5h15.4"/>',
+    shortcut: '<path d="M13.5 3.5L6 13h5l-1.5 7.5L17 10.5h-5z"/>',
+    clipboard: '<path d="M9 4.5H7.5A1.5 1.5 0 0 0 6 6v13a1.5 1.5 0 0 0 1.5 1.5h9A1.5 1.5 0 0 0 18 19V6a1.5 1.5 0 0 0-1.5-1.5H15"/><path d="M9 3.6h6v2.8H9z"/><path d="M9.2 12h5.6M9.2 15.5h3.6"/>',
     refresh: '<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4.5V9H15"/>',
     upload: '<path d="M12 19.5V8.5M7.5 13L12 8.5l4.5 4.5"/><path d="M5 4.5h14"/>',
     download: '<path d="M12 4.5v11M7.5 11L12 15.5l4.5-4.5"/><path d="M5 19.5h14"/>',
@@ -127,7 +162,11 @@
     }).catch(() => {});
   }
 
+  // 当前页面 id：设置里改了显示项之后要原地重画侧栏，得知道高亮哪一个
+  let activePage = "";
+
   function mount(page) {
+    activePage = page;
     mountSprite();
     const aside = document.getElementById("sidebar");
     aside.innerHTML = "";
@@ -177,17 +216,24 @@
     themeBtn.type = "button";
     themeBtn.id = "theme-btn";
     themeBtn.className = "btn ghost";
+    const settingsBtn = document.createElement("button");
+    settingsBtn.type = "button";
+    settingsBtn.id = "settings-btn";
+    settingsBtn.className = "btn ghost";
+    settingsBtn.textContent = "设置";
     const paletteHint = document.createElement("button");
     paletteHint.type = "button";
     paletteHint.className = "side-hint";
     paletteHint.textContent = "Ctrl+K 搜索";
     paletteHint.addEventListener("click", openPalette);
-    foot.append(folder, folderBtn, changeBtn, projectBtn, themeBtn, paletteHint);
+    foot.append(folder, folderBtn, changeBtn, projectBtn, themeBtn, settingsBtn, paletteHint);
     aside.append(brand, nav, foot);
 
     folderBtn.addEventListener("click", onFolderClick);
     changeBtn.addEventListener("click", () => connectFolder("pick"));
     projectBtn.addEventListener("click", openProjects);
+    settingsBtn.addEventListener("click", openSettings);
+    setupBlockedLinks();
     setupTheme(themeBtn);
     setupMenuToggle();
     setupPalette();
@@ -196,7 +242,16 @@
 
   function renderNavItems(nav, page) {
     nav.innerHTML = "";
-    navPages().forEach((item) => {
+    const pages = navPages();
+    if (pages.length === 0) {
+      // 全被关掉时给一句话，免得看着像坏了（入口在同一栏下方的「设置」）
+      const empty = document.createElement("p");
+      empty.className = "nav-empty muted";
+      empty.textContent = "侧栏是空的。点下面「设置」把页面打开。";
+      nav.append(empty);
+      return;
+    }
+    pages.forEach((item) => {
       const link = document.createElement("a");
       link.href = item.href;
       const label = document.createElement("span");
@@ -240,7 +295,8 @@
       if (!dragId || dragId === item.id) return;
       const rect = link.getBoundingClientRect();
       const after = !((event.clientY - rect.top) < rect.height / 2);
-      const pages = navPages();
+      // 排序在完整列表上做：被关掉的页面位置也一起保存，重新打开时回到原位
+      const pages = navOrder();
       const from = pages.findIndex((candidate) => candidate.id === dragId);
       if (from < 0) return;
       const moved = pages.splice(from, 1)[0];
@@ -648,7 +704,8 @@
     const data = paletteData || { todos: [], notes: [], resources: [] };
     const items = [];
 
-    PAGES.forEach((page) => {
+    // 被「设置」关掉的页面不在这里出现，和侧栏保持一致
+    navPages().forEach((page) => {
       if (!q || page.label.toLowerCase().includes(q)) {
         items.push({ kind: "页面", label: page.label, href: page.href });
       }
@@ -720,7 +777,14 @@
   function activatePalette(item) {
     if (!item) return;
     closePalette();
-    if (item.href) location.href = item.href;
+    if (!item.href) return;
+    // Ctrl+K 里搜到的待办/笔记也会指到对应页面，同样不能跳到已关掉的页面
+    const page = pageOfHref(item.href);
+    if (page && page.id !== activePage && hiddenPages().has(page.id)) {
+      blockNotice(page);
+      return;
+    }
+    location.href = item.href;
   }
 
   // ===== 快捷键 =====
@@ -987,5 +1051,219 @@
     });
   }
 
-  root.Nav = { boot, toast, fillProjects, setStatus, icon, openPalette, refreshBadges, pickPath };
+  /* ===== 统一确认弹窗 =====
+     替代浏览器原生 confirm()：原生弹窗由系统绘制，和本项目的毛玻璃弹窗不是一套观感。
+     ask({ title, text, okText, cancelText, danger }) → Promise<boolean>
+       点「确定」为 true；点「取消」、按 Esc、点窗口外的遮罩都算取消 false。
+     文案里的换行 \n 会原样显示。 */
+
+  let confirmAsk = null;
+
+  function buildConfirmDialog() {
+    const dialog = document.createElement("dialog");
+    dialog.id = "wb-confirm-dialog";
+    dialog.className = "code-dialog wb-confirm";
+    dialog.innerHTML = [
+      '<h2 id="wb-confirm-title">确认</h2>',
+      '<p class="sub" id="wb-confirm-text"></p>',
+      '<div class="dialog-actions">',
+      '  <span class="dialog-spacer"></span>',
+      '  <button type="button" id="wb-confirm-cancel" class="btn">取消</button>',
+      '  <button type="button" id="wb-confirm-ok" class="btn primary">确定</button>',
+      "</div>"
+    ].join("");
+    document.body.append(dialog);
+    const find = (id) => dialog.querySelector("#" + id);
+    find("wb-confirm-cancel").addEventListener("click", () => settleConfirm(false));
+    find("wb-confirm-ok").addEventListener("click", () => settleConfirm(true));
+    // Esc 和任何 dialog.close() 都按取消处理
+    dialog.addEventListener("close", () => settleConfirm(false));
+    // 点遮罩（落在 dialog 元素自身且不在窗口矩形内）按取消处理
+    dialog.addEventListener("click", (event) => {
+      if (event.target !== dialog) return;
+      const rect = dialog.getBoundingClientRect();
+      const outside = event.clientX < rect.left || event.clientX > rect.right
+        || event.clientY < rect.top || event.clientY > rect.bottom;
+      if (outside) settleConfirm(false);
+    });
+    return dialog;
+  }
+
+  function ensureConfirmDialog() {
+    return document.getElementById("wb-confirm-dialog") || buildConfirmDialog();
+  }
+
+  function settleConfirm(value) {
+    const ask = confirmAsk;
+    confirmAsk = null;
+    const dialog = document.getElementById("wb-confirm-dialog");
+    if (dialog && dialog.open) dialog.close();
+    if (ask) ask.resolve(value);
+  }
+
+  function ask(options) {
+    const opts = typeof options === "string" ? { text: options } : (options || {});
+    const dialog = ensureConfirmDialog();
+    if (confirmAsk) settleConfirm(false); // 上一次还没关（正常流程不会发生），按取消收尾
+    return new Promise((resolve) => {
+      confirmAsk = { resolve };
+      dialog.querySelector("#wb-confirm-title").textContent = opts.title || "确认";
+      dialog.querySelector("#wb-confirm-text").textContent = String(opts.text || "");
+      const cancel = dialog.querySelector("#wb-confirm-cancel");
+      const ok = dialog.querySelector("#wb-confirm-ok");
+      cancel.textContent = opts.cancelText || "取消";
+      ok.textContent = opts.okText || "确定";
+      ok.className = opts.danger ? "btn danger" : "btn primary";
+      dialog.showModal();
+      // 危险操作默认落在「取消」上，避免一路回车把东西删了
+      (opts.danger ? cancel : ok).focus();
+    });
+  }
+
+  /* ===== 设置面板 =====
+     目前只有一项能力：把不用的页面从侧栏（和 Ctrl+K）里关掉。
+     关掉只影响显示——页面本身不动，直接输网址照样能打开，排序位置也留着。 */
+
+  function settingsDialog() {
+    let dialog = document.getElementById("wb-settings-dialog");
+    if (dialog) return dialog;
+    dialog = document.createElement("dialog");
+    dialog.id = "wb-settings-dialog";
+    dialog.className = "code-dialog wb-settings";
+    dialog.innerHTML = [
+      "<h2>设置</h2>",
+      '<p class="sub">关掉不用的页面，侧栏和 Ctrl+K 搜索里都不再出现。'
+        + "页面本身还在，直接输网址照样能打开；位置也保留，重新打开时回到原处。</p>",
+      '<div class="settings-list" id="wb-settings-list"></div>',
+      '<div class="dialog-actions">',
+      '  <button type="button" id="wb-settings-all" class="btn">全部打开</button>',
+      '  <span class="dialog-spacer"></span>',
+      '  <button type="button" id="wb-settings-close" class="btn primary">完成</button>',
+      "</div>"
+    ].join("");
+    document.body.append(dialog);
+    dialog.querySelector("#wb-settings-close").addEventListener("click", () => dialog.close());
+    dialog.querySelector("#wb-settings-all").addEventListener("click", () => {
+      writeIdList(HIDDEN_KEY, []);
+      paintSettings();
+      repaintNav();
+    });
+    return dialog;
+  }
+
+  function paintSettings() {
+    const dialog = settingsDialog();
+    const list = dialog.querySelector("#wb-settings-list");
+    const hidden = hiddenPages();
+    list.innerHTML = "";
+    navOrder().forEach((page) => {
+      const row = document.createElement("label");
+      row.className = "settings-row";
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = !hidden.has(page.id);
+      box.dataset.page = page.id;
+      box.addEventListener("change", () => {
+        setPageHidden(page.id, !box.checked);
+        repaintNav();
+        paintSettingsFooter(dialog);
+      });
+      const name = document.createElement("span");
+      name.className = "settings-name";
+      name.textContent = page.label;
+      const hint = document.createElement("span");
+      hint.className = "settings-hint muted";
+      hint.textContent = page.href;
+      row.append(box, name, hint);
+      list.append(row);
+    });
+    paintSettingsFooter(dialog);
+  }
+
+  function paintSettingsFooter(dialog) {
+    const hidden = hiddenPages().size;
+    const all = dialog.querySelector("#wb-settings-all");
+    all.disabled = hidden === 0;
+    all.textContent = hidden ? "全部打开（已关 " + hidden + " 个）" : "全部打开";
+  }
+
+  function repaintNav() {
+    const nav = document.querySelector(".nav-list");
+    if (nav) renderNavItems(nav, activePage);
+  }
+
+  function openSettings(focusId) {
+    paintSettings();
+    const dialog = settingsDialog();
+    if (!dialog.open) dialog.showModal();
+    if (focusId) highlightSetting(dialog, focusId);
+  }
+
+  // 从「这个页面关掉了」弹窗点过来时，把对应的那一行标出来并滚到眼前
+  function highlightSetting(dialog, id) {
+    const rows = Array.prototype.slice.call(dialog.querySelectorAll(".settings-row"));
+    const row = rows.find((item) => item.querySelector("input").dataset.page === id);
+    if (!row) return;
+    row.classList.add("settings-hit");
+    const list = dialog.querySelector("#wb-settings-list");
+    const listRect = list.getBoundingClientRect();
+    const rowRect = row.getBoundingClientRect();
+    list.scrollTop += rowRect.top - listRect.top - (listRect.height - rowRect.height) / 2;
+  }
+
+  /* ===== 关掉的页面：链接不再跳过去 =====
+     页面在「设置」里关掉之后，别的页面上的链接（项目页的待办/笔记/代码…）
+     如果还照跳，进去只会看到"侧栏里没有它"，像坏了一样。统一拦下来，弹窗说清楚，
+     并给一个「打开设置」的入口。 */
+
+  // 链接指向哪个页面：必须同源、文件名对得上
+  function pageOfHref(href) {
+    if (!href) return null;
+    let url;
+    try {
+      url = new URL(href, location.href);
+    } catch (err) {
+      return null;
+    }
+    if (url.origin !== location.origin) return null;
+    const file = url.pathname.split("/").pop();
+    if (!file) return null;
+    return PAGES.find((page) => page.href === file) || null;
+  }
+
+  function hiddenTargetOf(link) {
+    if (!link || link.hasAttribute("download") || link.target === "_blank") return null;
+    const href = link.getAttribute("href");
+    if (!href || href.charAt(0) === "#") return null;
+    const page = pageOfHref(href);
+    if (!page || page.id === activePage) return null; // 本页自己的链接不管
+    return hiddenPages().has(page.id) ? page : null;
+  }
+
+  function blockNotice(page) {
+    ask({
+      title: "「" + page.label + "」已在设置里关闭",
+      text: "这个页面在「设置」里被关掉了，所以这里的链接不再跳转。\n\n"
+        + "需要用它的话，可以在设置里重新打开（" + page.href + "）。",
+      okText: "打开设置",
+      cancelText: "知道了"
+    }).then((openIt) => {
+      if (openIt) openSettings(page.id);
+    });
+  }
+
+  // 冒泡阶段处理：页面自己已经 preventDefault 的（自己接管了跳转）就不插手
+  function setupBlockedLinks() {
+    document.addEventListener("click", (event) => {
+      if (event.defaultPrevented || event.button !== 0) return;
+      const target = event.target;
+      const link = target && target.closest ? target.closest("a[href]") : null;
+      const page = hiddenTargetOf(link);
+      if (!page) return;
+      event.preventDefault();
+      blockNotice(page);
+    });
+  }
+
+  root.Nav = { boot, toast, fillProjects, setStatus, icon, openPalette, refreshBadges, pickPath, ask, openSettings };
 })(typeof window !== "undefined" ? window : globalThis);

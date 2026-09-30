@@ -549,7 +549,11 @@
     }
     // 发布读的是磁盘上的 ini，有未保存的改动先落盘
     if (dirty) {
-      if (!confirm("还有未保存的修改，发布用的是磁盘上的配置。先保存再发布？")) return;
+      if (!(await Nav.ask({
+        title: "有未保存的修改",
+        text: "发布用的是磁盘上的配置。先保存再发布？",
+        okText: "保存并发布"
+      }))) return;
       if (!(await save())) return;
     }
     setPublishBusy(true);

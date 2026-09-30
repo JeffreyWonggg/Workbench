@@ -3,6 +3,10 @@
     bindCapture();
     bindTools();
     await render();
+    // 余额卡片自己取数、自己渲染，失败也不影响首页其它部分
+    DeepSeekCard.init().catch((err) => {
+      Nav.toast("余额卡片出错：" + (err && err.message ? err.message : "未知错误"));
+    });
     window.addEventListener("workbench-projects", () => {
       Nav.fillProjects(document.getElementById("capture-project"));
     });

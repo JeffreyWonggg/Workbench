@@ -373,8 +373,15 @@
   }
 
   async function removeItem(name, kind) {
-    const label = kind === "folder" ? "文件夹「" + name + "」（连同里面的全部内容）" : "「" + name + "」";
-    if (!window.confirm("删除" + label + "？")) return;
+    const folder = kind === "folder";
+    if (!(await Nav.ask({
+      title: folder ? "删除文件夹" : "删除文件",
+      text: folder
+        ? "「" + name + "」及里面的全部内容都会被删除。"
+        : "「" + name + "」会被删除。",
+      okText: "删除",
+      danger: true
+    }))) return;
     try {
       const query = "?name=" + encodeURIComponent(name) + "&type=" + encodeURIComponent(kind || "file");
       const response = await fetch("/lan/delete" + query, { method: "POST" });

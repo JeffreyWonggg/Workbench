@@ -1884,6 +1884,31 @@ h2 { font-size: var(--text-lg); }
   .lan-file-actions { justify-content: flex-start; }
 }
 
+/* ===== 首页 DeepSeek 余额 ===== */
+.usage-card { margin-bottom: var(--space-4); }
+
+.usage-actions { display: flex; gap: var(--space-3); }
+
+.usage-actions .linkish { font-size: 13px; }
+
+.usage-stats { display: flex; flex-wrap: wrap; gap: var(--space-5); }
+
+.usage-stat { display: flex; flex-direction: column; gap: 2px; min-width: 96px; }
+
+.usage-label { color: var(--muted); font-size: 13px; }
+
+.usage-value {
+  font-family: var(--font-mono);
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-hint { color: var(--muted); font-size: 12px; }
+
+.usage-foot { margin: 10px 0 0; font-size: 13px; }
+
 /* ===== 首页「今天要做的」 ===== */
 .focus-card { margin-bottom: var(--space-4); }
 
@@ -2940,6 +2965,60 @@ body.is-busy .code-main { box-shadow: var(--card-shadow), inset 0 0 0 1px var(--
 
 .code-dialog::backdrop { background: rgba(15, 23, 42, 0.42); }
 
+/* 通用确认弹窗（js/nav.js 的 Nav.ask）：不需要 .code-dialog 那么宽，
+   文案按原样换行，长句子（重置、迁出这类）能读清楚 */
+.wb-confirm { width: min(460px, calc(100vw - 32px)); }
+
+.wb-confirm .sub { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* 设置面板（js/nav.js 的 openSettings）：页面开关列表 */
+.wb-settings { width: min(520px, calc(100vw - 32px)); }
+
+.settings-list {
+  margin: 0 0 var(--space-4);
+  max-height: min(52vh, 420px);
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 8px var(--space-3);
+  cursor: pointer;
+  border-bottom: 1px solid var(--line);
+}
+
+.settings-row:last-child { border-bottom: 0; }
+
+.settings-row:hover { background: var(--hover); }
+
+/* 从「这个页面关掉了」弹窗跳过来时，标出是哪一行 */
+.settings-row.settings-hit {
+  background: var(--accent-soft, var(--hover));
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.settings-row input[type="checkbox"] { flex: none; }
+
+.settings-row .settings-name { flex: 1 1 auto; }
+
+.settings-row .settings-hint {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+/* 侧栏项全被关掉时的提示 */
+.nav-empty {
+  margin: 0;
+  padding: 8px 12px;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
 #confirm-text, .confirm-command { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .confirm-command {
@@ -3106,7 +3185,9 @@ body.is-busy .code-main { box-shadow: var(--card-shadow), inset 0 0 0 1px var(--
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
   gap: var(--space-4);
-  align-items: start;
+  /* 行高由该行最高的卡决定，其余卡拉伸到同一底边；
+     各菜谱的食材/步骤行数不一，不拉伸就会高低参差 */
+  align-items: stretch;
   margin-top: var(--space-3);
 }
 
@@ -3283,4 +3364,139 @@ body.is-busy .code-main { box-shadow: var(--card-shadow), inset 0 0 0 1px var(--
 @media (prefers-reduced-motion: reduce) {
   .recipe-card { transition: none; }
   .recipe-card:hover { transform: none; }
+}
+
+/* ===== 快捷方式页 ===== */
+
+.shortcut-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--space-4);
+  /* 同一排以最高的卡片为准等高 */
+  align-items: stretch;
+  margin-top: var(--space-3);
+}
+
+.shortcut-tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.shortcut-tile:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--card-shadow), 0 10px 24px rgba(15, 23, 42, 0.10);
+}
+
+.shortcut-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.shortcut-name {
+  margin: 0;
+  min-width: 0;
+  font-size: var(--text-md);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.shortcut-actions {
+  display: flex;
+  flex: none;
+  gap: var(--space-1);
+  margin-left: auto;
+  opacity: 0.6;
+  transition: opacity 0.15s ease;
+}
+
+.shortcut-tile:hover .shortcut-actions,
+.shortcut-tile:focus-within .shortcut-actions { opacity: 1; }
+
+.shortcut-actions .linkish.danger:hover { color: var(--danger); background: var(--danger-soft); }
+
+/* 路径最多两行，长路径不至于把卡片撑得很高 */
+.shortcut-path {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin: 0;
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.shortcut-note {
+  margin: auto 0 0;
+  font-size: var(--text-xs);
+}
+
+.shortcut-pick {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.shortcut-empty {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+}
+
+/* ===== 剪贴板页 ===== */
+
+.clip-list .empty { padding: var(--space-4) var(--space-3); }
+
+.clip-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--line);
+}
+
+.clip-row:last-child { border-bottom: 0; }
+
+.clip-row:hover { background: var(--hover); }
+
+.clip-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.clip-stamp,
+.clip-meta { font-size: var(--text-xs); }
+
+.clip-text {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--code-bg);
+  color: var(--code-ink);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* 折叠时只露 4 行（1.5 行高 × 4，再加内边距） */
+.clip-text.is-clamped {
+  max-height: calc(1.5em * 4 + 16px);
+  overflow: hidden;
+}
+
+@media (max-width: 680px) {
+  .shortcut-grid { grid-template-columns: minmax(0, 1fr); }
+  .shortcut-actions { opacity: 1; }
 }

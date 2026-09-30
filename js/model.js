@@ -6,6 +6,86 @@
   // git 页的默认配置：roots 是代码根目录，repos 是「仓库 → 项目」的绑定表
   const DEFAULT_GIT = { roots: [], repos: [] };
 
+  // 菜谱示例：只在「一条菜谱都没有」时灌一次，方便打开页面就能看到效果。
+  // 之后即使把菜谱删光或清空回收站，也不会再自动补回来（由 meta.json 的 recipesSeeded 标记控制）。
+  const DEFAULT_RECIPES = [
+    {
+      id: "rcp-sample-tomato-egg",
+      name: "番茄炒蛋",
+      category: "家常菜",
+      ingredients: ["番茄 2 个", "鸡蛋 3 个", "小葱 1 根", "盐 少许", "白糖 1 小勺", "食用油 适量"],
+      steps: [
+        "鸡蛋打散，加一小撮盐搅匀；番茄去蒂切块，小葱切末。",
+        "热锅倒油，油温五成热下蛋液，凝固定型后盛出。",
+        "锅内留底油，下番茄中火炒出汁水，加白糖和盐调味。",
+        "倒回炒蛋翻匀，让蛋块裹上汤汁，撒葱花出锅。"
+      ]
+    },
+    {
+      id: "rcp-sample-pepper-pork",
+      name: "青椒肉丝",
+      category: "家常菜",
+      ingredients: ["猪里脊 200 克", "青椒 2 个", "生抽 1 勺", "淀粉 1 小勺", "盐 少许", "食用油 适量"],
+      steps: [
+        "里脊切细丝，加生抽和淀粉抓匀，腌 10 分钟。",
+        "青椒去籽切丝。",
+        "热锅倒油，下肉丝快速滑散至变色，盛出备用。",
+        "下青椒丝炒至断生，回锅肉丝，加盐炒匀即可。"
+      ]
+    },
+    {
+      id: "rcp-sample-garlic-lettuce",
+      name: "蒜蓉生菜",
+      category: "素菜",
+      ingredients: ["生菜 1 颗", "大蒜 3 瓣", "生抽 1 勺", "蚝油 半勺", "食用油 适量"],
+      steps: [
+        "生菜洗净掰散，大蒜切末。",
+        "水烧开加少许盐和油，生菜焯 15 秒后捞出沥干。",
+        "热锅倒油爆香蒜末，加生抽和蚝油调成味汁。",
+        "把味汁浇在生菜上拌匀即可。"
+      ]
+    },
+    {
+      id: "rcp-sample-tomato-egg-soup",
+      name: "西红柿鸡蛋汤",
+      category: "汤",
+      ingredients: ["西红柿 1 个", "鸡蛋 1 个", "小葱 1 根", "盐 少许", "香油 几滴"],
+      steps: [
+        "西红柿切小块，鸡蛋打散，小葱切末。",
+        "锅中加两碗水烧开，下西红柿煮 3 分钟。",
+        "转小火，沿锅边缓缓淋入蛋液，形成蛋花。",
+        "加盐调味，滴香油、撒葱花即可。"
+      ]
+    },
+    {
+      id: "rcp-sample-fried-rice",
+      name: "蛋炒饭",
+      category: "主食",
+      ingredients: ["隔夜米饭 2 碗", "鸡蛋 2 个", "火腿 1 小块", "小葱 1 根", "生抽 1 勺", "盐 少许"],
+      steps: [
+        "鸡蛋打散，火腿切小丁，小葱切末。",
+        "热锅倒油，炒散鸡蛋后盛出。",
+        "下火腿丁略炒，倒入米饭压散炒匀。",
+        "加回鸡蛋，淋生抽、撒盐炒香，撒葱花出锅。"
+      ]
+    },
+    {
+      id: "rcp-sample-steamed-egg",
+      name: "蒸水蛋",
+      category: "早餐",
+      ingredients: ["鸡蛋 2 个", "温水 蛋液的 1.5 倍", "盐 少许", "生抽 几滴", "香油 几滴"],
+      steps: [
+        "鸡蛋打散，加盐和约 1.5 倍温水搅匀。",
+        "过筛滤去浮沫，倒入碗中盖上保鲜膜。",
+        "上汽后中火蒸 10 分钟，关火再焖 2 分钟。",
+        "淋上生抽和香油即可。"
+      ]
+    }
+  ];
+
+  // 「快捷方式」页：清单存在 meta.json 的 shortcuts 字段里（和「工具」菜单同一套思路）。
+  // path 既可以是本机文件/文件夹（交给系统默认程序打开），也可以是 http(s) 网址。
+  const DEFAULT_SHORTCUTS = [];
 
   const STATES = [
     { id: "DOING", label: "进行中" },
@@ -235,6 +315,30 @@
     return tools;
   }
 
+  // 快捷方式容错：丢掉没填路径的条目，补齐 id / 名称（缺省用路径最后一段）
+  function normalizeShortcuts(list) {
+    // 显式给空数组表示「用户不想留任何快捷方式」，此时不回退到默认值
+    const source = Array.isArray(list) ? list : DEFAULT_SHORTCUTS;
+    const seen = Object.create(null);
+    const shortcuts = [];
+    source.forEach((item, index) => {
+      const path = String((item && item.path) || "").trim();
+      if (!path) return;
+      let id = String((item && item.id) || "").trim() || "sc-" + (index + 1);
+      while (seen[id]) id += "-2";
+      seen[id] = true;
+      shortcuts.push({
+        id,
+        label: String((item && item.label) || "").trim()
+          || path.replace(/[\\/]+$/, "").split(/[\\/]/).pop()
+          || "未命名",
+        path,
+        note: String((item && item.note) || "").trim()
+      });
+    });
+    return shortcuts;
+  }
+
   // git 配置容错：去掉空路径与重复项，仓库名缺省取目录名
   function normalizeGit(git) {
     const source = git && typeof git === "object" ? git : {};
@@ -319,6 +423,15 @@
       }));
   }
 
+  // 示例菜谱带上时间戳：越靠前的越新，列表按「最近更新」排下来正好是录入顺序
+  function defaultRecipes() {
+    const base = Date.now();
+    return DEFAULT_RECIPES.map((item, index) => {
+      const stamp = new Date(base - index * 60000).toISOString();
+      return Object.assign({}, item, { createdAt: stamp, updatedAt: stamp, deletedAt: "" });
+    });
+  }
+
   function todoWeekIso(todo) {
     if (todo.state === "DONE" && todo.doneAt) return todo.doneAt;
     return todo.date || todo.updatedAt || "";
@@ -392,8 +505,10 @@
     DEFAULT_PROJECTS,
     DEFAULT_TOOLS,
     DEFAULT_GIT,
+    DEFAULT_SHORTCUTS,
     STATES,
     normalizeTools,
+    normalizeShortcuts,
     normalizeGit,
     normalizeSoftware,
     normalizeRecipes,
@@ -532,7 +647,12 @@
     },
 
     async ensureMeta() {
-      const fallback = { projects: DEFAULT_PROJECTS.slice(), lastWeek: null, tools: DEFAULT_TOOLS.slice() };
+      const fallback = {
+        projects: DEFAULT_PROJECTS.slice(),
+        lastWeek: null,
+        tools: DEFAULT_TOOLS.slice(),
+        shortcuts: DEFAULT_SHORTCUTS.slice()
+      };
       let meta;
       try {
         meta = await this.readJson("meta.json", fallback);
@@ -541,6 +661,9 @@
       }
       if (!Array.isArray(meta.projects) || meta.projects.length === 0) meta.projects = DEFAULT_PROJECTS.slice();
       meta.tools = Array.isArray(meta.tools) ? normalizeTools(meta.tools) : normalizeTools(DEFAULT_TOOLS);
+      meta.shortcuts = Array.isArray(meta.shortcuts)
+        ? normalizeShortcuts(meta.shortcuts)
+        : normalizeShortcuts(DEFAULT_SHORTCUTS);
       meta.git = meta.git ? normalizeGit(meta.git) : normalizeGit(DEFAULT_GIT);
       this.meta = meta;
       return meta;
@@ -607,7 +730,18 @@
 
     async loadRecipes() {
       const list = await this.readJson("recipes.json", []);
-      return normalizeRecipes(list);
+      const items = normalizeRecipes(list);
+      // 头一次打开、且没有一条「还在用」的菜谱时，灌一份示例。
+      // 只看未删除的条目：回收站里躺着旧记录也算"没有菜谱"。
+      // 已有（含回收站里的）条目会原样保留，示例追加在后面。
+      if (activeItems(items).length === 0 && this.meta && !this.meta.recipesSeeded) {
+        const seeded = items.concat(normalizeRecipes(defaultRecipes()));
+        await this.writeJson("recipes.json", seeded);
+        this.meta.recipesSeeded = true;
+        await this.saveMeta();
+        return seeded;
+      }
+      return items;
     },
 
     async saveRecipes(list) {

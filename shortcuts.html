@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>快捷方式</title>
+  <meta name="color-scheme" content="dark light">
+  <link rel="preload" href="fonts/inter-latin-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/jetbrains-mono-latin-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="css/app.css">
+  <script>try{document.documentElement.dataset.theme=localStorage.getItem("wb-theme")||"light"}catch(e){document.documentElement.dataset.theme="light"}</script>
+</head>
+<body>
+  <div id="shell">
+    <aside id="sidebar"></aside>
+    <main id="main">
+      <div id="gate" hidden></div>
+      <div id="content" hidden>
+        <header class="page-head">
+          <div>
+            <p class="kicker">快捷方式</p>
+            <h1>快捷方式</h1>
+            <p class="sub" id="shortcut-count"></p>
+          </div>
+          <div class="row-actions">
+            <button type="button" id="shortcut-add" class="btn primary">新增快捷方式</button>
+          </div>
+        </header>
+
+        <div id="shortcut-list" class="shortcut-grid"></div>
+      </div>
+    </main>
+  </div>
+
+  <dialog id="shortcut-dialog" class="code-dialog">
+    <form id="shortcut-form">
+      <h2 id="shortcut-dialog-title">新增快捷方式</h2>
+      <p class="sub">路径既可以是本机文件/文件夹（用系统默认程序打开），也可以直接填网址（http/https）。
+        点卡片即可打开；路径要写完整的盘符路径，例如 <code>D:\Tool</code>。</p>
+      <div class="form-grid">
+        <label class="wide">
+          <span>名称</span>
+          <input id="shortcut-label" type="text" placeholder="例如：模板工具 或 项目文档" autocomplete="off">
+        </label>
+        <label class="wide">
+          <span>路径 / 网址</span>
+          <input id="shortcut-path" type="text" placeholder="D:\Tool\TemplateTool 或 https://github.com/…" autocomplete="off" required>
+        </label>
+        <div class="wide shortcut-pick">
+          <button type="button" id="shortcut-pick-dir" class="btn">选择文件夹…</button>
+          <button type="button" id="shortcut-pick-file" class="btn">选择文件…</button>
+          <span class="muted">选完自动回填，也可以直接粘贴路径</span>
+        </div>
+        <label class="wide">
+          <span>备注（可选）</span>
+          <input id="shortcut-note" type="text" placeholder="写在卡片上的一句话说明" autocomplete="off">
+        </label>
+      </div>
+      <p id="shortcut-error" class="vault-error" hidden></p>
+      <div class="dialog-actions">
+        <span class="dialog-spacer"></span>
+        <button type="button" id="shortcut-cancel" class="btn">取消</button>
+        <button type="submit" id="shortcut-save" class="btn primary">保存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="js/storage.js"></script>
+  <script src="js/model.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/shortcuts.js"></script>
+</body>
+</html>
