@@ -18,8 +18,12 @@
     showDeleted: false,
     editing: "",
     busy: false,
-    projectFilter: ""
+    projectFilter: "",
+    changesPage: 1
   };
+
+  // 改动列表每页条数（和历史列表保持一致）
+  const CHANGE_PAGE_SIZE = 30;
 
   // 危险操作的确认文案：写清楚会发生什么
   const OP_META = {
@@ -96,6 +100,38 @@
     if (!state.projectFilter) return state.repos;
     const filtered = state.repos.filter((repo) => repo.project === state.projectFilter);
     return filtered.length ? filtered : state.repos;
+  }
+
+  // 悬停提示：把"点下去会执行什么命令"写在按钮上（用原生 title，零依赖）。
+  // 固定动作按 OP_META 取命令；带参数的动作在创建按钮时传入具体命令。
+  function commandHint(op) {
+    const meta = OP_META[op] || {};
+    return meta.command ? "将执行：" + meta.command : "";
+  }
+
+  // 页面上固定按钮 → 动作 的对应表
+  const STATIC_HINTS = {
+    "repo-fetch": "fetch",
+    "repo-pull": "pull",
+    "stage-all": "stage-all",
+    "stage-selected": "stage-paths",
+    "unstage-selected": "unstage-paths",
+    "discard-selected": "discard",
+    "commit": "commit",
+    "commit-amend": "commit-amend",
+    "stash": "stash",
+    "stash-pop": "stash-pop",
+    "create-branch": "branch-new",
+    "create-tag": "tag-create"
+  };
+
+  function applyStaticHints() {
+    Object.keys(STATIC_HINTS).forEach((id) => {
+      const el = $(id);
+      if (!el) return;
+      const hint = commandHint(STATIC_HINTS[id]);
+      if (hint) el.title = hint;
+    });
   }
 
   function bind() {
@@ -226,6 +262,8 @@
     });
 
     $("confirm-cancel").addEventListener("click", () => $("confirm-dialog").close());
+
+    applyStaticHints();
   }
 
   /* ===== 仓库与状态 ===== */
@@ -477,23 +515,30 @@
 
     fillProjectSelect($("repo-project"), repo ? repo.project : "", "未绑定");
 
-    // 直达「更新软件版本」的对应项目：两页保持独立，但一键跳得过去
+    // 直达「更新软件版本」的对应项目（按你的要求：这两个按钮不给悬停提示）
     const release = $("repo-release");
     if (release) {
       const section = repo ? (repo.project || repo.name) : "";
       release.hidden = !repo;
       release.href = "version.html?section=" + encodeURIComponent(section);
-      release.title = section ? "在「更新软件版本」里配置「" + section + "」" : "";
     }
 
-    // 远端：没设置时按钮更醒目一点，推送失败时也靠它兜底
+    // 远端：没设置时按钮更醒目一点（同样不给悬停提示）
     const remote = $("repo-remote");
     if (remote) {
       const url = status && status.remoteUrl ? status.remoteUrl : "";
       remote.textContent = url ? "远端" : "设置远端";
-      remote.title = url ? ("origin: " + url) : "还没有远端地址，首次推送前先设置";
       remote.classList.toggle("primary", !url && !!repo);
       remote.disabled = state.busy || !repo;
+    }
+
+    // 推送按钮的实际命令取决于有没有上游：首次推送要顺带建立上游
+    const push = $("repo-push");
+    if (push) {
+      const first = !status || !status.upstream;
+      push.title = first
+        ? "将执行：git push --set-upstream origin HEAD（首次推送，顺带建立上游跟踪）"
+        : "将执行：git push";
     }
 
     const disabled = state.busy || !repo;
@@ -544,6 +589,7 @@
     if (state.current === path) return;
     state.current = path;
     state.selected.clear();
+    state.changesPage = 1;
     state.log = { skip: 0, limit: 30, items: [], hasMore: false };
     $("diff-view").hidden = true;
     renderRepos();
@@ -661,22 +707,71 @@
       return;
     }
 
-    const groups = [
-      { key: "staged", title: "已暂存", items: status.files.filter((file) => file.staged) },
-      { key: "unstaged", title: "未暂存", items: status.files.filter((file) => file.unstaged) }
-    ];
-    groups.forEach((group) => {
-      if (!group.items.length) return;
-      const head = document.createElement("h3");
-      head.className = "sub-head";
-      head.textContent = group.title + "（" + group.items.length + "）";
-      list.append(head);
-      group.items.forEach((file) => list.append(changeRow(file, group.key)));
+    // 已暂存的排在前面，未暂存接上；整体分页，每页固定条数（不再无限往下长）
+    const entries = [];
+    status.files.filter((file) => file.staged).forEach((file) => entries.push({ group: "staged", file }));
+    status.files.filter((file) => file.unstaged).forEach((file) => entries.push({ group: "unstaged", file }));
+
+    const pages = Math.max(1, Math.ceil(entries.length / CHANGE_PAGE_SIZE));
+    if (state.changesPage > pages) state.changesPage = pages;
+    if (state.changesPage < 1) state.changesPage = 1;
+    const start = (state.changesPage - 1) * CHANGE_PAGE_SIZE;
+    const titles = { staged: "已暂存", unstaged: "未暂存" };
+    const totals = { staged: status.staged, unstaged: status.unstaged };
+    let lastGroup = "";
+    entries.slice(start, start + CHANGE_PAGE_SIZE).forEach(({ group, file }) => {
+      if (group !== lastGroup) {
+        lastGroup = group;
+        const head = document.createElement("h3");
+        head.className = "sub-head";
+        head.textContent = titles[group] + "（" + totals[group] + "）";
+        list.append(head);
+      }
+      list.append(changeRow(file, group));
     });
+    if (pages > 1) list.append(changePager(entries.length, state.changesPage, pages));
 
     $("changes-count").textContent = status.staged + " 已暂存 · " + status.unstaged + " 未暂存";
     $("select-all").checked = state.selected.size > 0 &&
       state.selected.size === status.files.filter((file) => file.unstaged || file.staged).length;
+  }
+
+  // 分页条：挂在列表底部（和列表同一个方框，不额外占版面）
+  function changePager(total, page, pages) {
+    const box = document.createElement("div");
+    box.className = "list-pager";
+
+    const info = document.createElement("span");
+    info.className = "muted";
+    info.textContent = "共 " + total + " 个文件 · 第 " + page + "/" + pages + " 页";
+
+    const spacer = document.createElement("span");
+    spacer.className = "dialog-spacer";
+
+    const prev = document.createElement("button");
+    prev.type = "button";
+    prev.className = "btn";
+    prev.textContent = "上一页";
+    prev.disabled = page <= 1;
+    prev.title = "上一页（不会执行任何 git 命令）";
+    prev.addEventListener("click", () => goChangePage(page - 1));
+
+    const next = document.createElement("button");
+    next.type = "button";
+    next.className = "btn";
+    next.textContent = "下一页";
+    next.disabled = page >= pages;
+    next.title = "下一页（不会执行任何 git 命令）";
+    next.addEventListener("click", () => goChangePage(page + 1));
+
+    box.append(info, spacer, prev, next);
+    return box;
+  }
+
+  function goChangePage(page) {
+    if (page === state.changesPage) return;
+    state.changesPage = page;
+    renderChanges();
   }
 
   function changeRow(file, group) {
@@ -714,6 +809,7 @@
     view.type = "button";
     view.className = "linkish";
     view.textContent = "差异";
+    view.title = "查看差异（只读，不会改动任何文件）";
     view.addEventListener("click", () => showFileDiff(file, group));
     actions.append(view);
 
@@ -722,6 +818,7 @@
       discard.type = "button";
       discard.className = "linkish";
       discard.textContent = "放弃";
+      discard.title = "将执行：git checkout -- " + file.path;
       discard.addEventListener("click", () => {
         state.selected.clear();
         state.selected.add(file.path);
@@ -873,7 +970,7 @@
           title: "反向提交",
           text: "生成一条新提交来撤销 " + commit.hash + "「" + commit.subject + "」。历史保留，还可以再撤销它。",
           danger: false
-        })),
+        }), false, "git revert --no-edit " + commit.hash),
         textAction("回滚到此", () => runOp("reset-hard", { ref: commit.hash }, {
           done: "已回滚到 " + commit.hash,
           confirm: true,
@@ -881,7 +978,7 @@
           text: "工作区与暂存区都会重置到 " + commit.hash + "「" + commit.subject
             + "」，未提交的改动会丢失。之后的提交仍在 reflog 里，但界面上看不到了。",
           danger: true
-        }))
+        }), false, "git reset --hard " + commit.hash)
       );
 
       row.append(head, actions);
@@ -912,14 +1009,14 @@
       const row = plainRow(branch.name, (branch.subject || "") + " · " + relTime(branch.at), branch.name === result.current);
       row.actions.append(
         textAction("切换", () => runOp("checkout", { ref: branch.name }, { done: "已切到 " + branch.name }),
-          branch.name === result.current),
+          branch.name === result.current, "git checkout " + branch.name),
         textAction("删除", () => runOp("branch-delete", { name: branch.name }, {
           done: "已删除分支 " + branch.name,
           confirm: true,
           title: "删除分支",
           text: "删除本地分支「" + branch.name + "」，没合并的提交会被 git 拒绝删除。",
           danger: true
-        }), branch.name === result.current)
+        }), branch.name === result.current, "git branch -d " + branch.name)
       );
       local.append(row.el);
     });
@@ -930,7 +1027,7 @@
       row.actions.append(textAction("检出到新分支", () => {
         $("new-branch").value = branch.name.replace(/^[^/]+\//, "");
         Nav.toast("已填入分支名，确认后点「新建并切换」");
-      }));
+      }, false, "先填入分支名，确认后执行 git checkout -b <分支名>"));
       remote.append(row.el);
     });
   }
@@ -954,15 +1051,16 @@
           title: "推送标签",
           text: "把标签「" + tag.name + "」推到 origin。",
           danger: false
-        })),
-        textAction("检出", () => runOp("checkout", { ref: tag.name }, { done: "已切到标签 " + tag.name })),
+        }), false, "git push origin " + tag.name),
+        textAction("检出", () => runOp("checkout", { ref: tag.name }, { done: "已切到标签 " + tag.name }),
+          false, "git checkout " + tag.name),
         textAction("删除", () => runOp("tag-delete", { name: tag.name }, {
           done: "已删除标签 " + tag.name,
           confirm: true,
           title: "删除标签",
-          text: "删除本地标签「" + tag.name + "」，远端同名标签不受影响。",
+          text: "删除本地标签「" + tag.name + "」，远端同名标签不影响。",
           danger: true
-        }))
+        }), false, "git tag -d " + tag.name)
       );
       list.append(row.el);
     });
@@ -1044,12 +1142,15 @@
     return { el, actions };
   }
 
-  function textAction(label, onclick, disabled) {
+  // hint：鼠标悬停时的说明。动态行里的动作带着实际参数（如 "git checkout main"），
+  // 比 OP_META 的占位写法更准确；不是命令的说明（纯提示文字）原样显示。
+  function textAction(label, onclick, disabled, hint) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "linkish";
     button.textContent = label;
     button.disabled = !!disabled;
+    if (hint) button.title = /^git\s/.test(hint) ? "将执行：" + hint : hint;
     button.addEventListener("click", onclick);
     return button;
   }
@@ -1101,12 +1202,13 @@
           await Workbench.saveSoftware(state.software);
           renderSoftwareList();
           Nav.toast("已恢复");
-        }));
+        }, false, "从回收站恢复这条软件号"));
       } else {
         row.actions.append(
-          textAction("复制", () => copyText(item.softwareId || item.name, "已复制软件号")),
-          textAction("编辑", () => openSoftware(item.id)),
-          textAction("删除", () => softDeleteSoftware(item))
+          textAction("复制", () => copyText(item.softwareId || item.name, "已复制软件号"),
+            false, "复制软件号到剪贴板（不会改动任何数据）"),
+          textAction("编辑", () => openSoftware(item.id), false, "修改这条软件号"),
+          textAction("删除", () => softDeleteSoftware(item), false, "移到回收站（可以在回收站里还原）")
         );
       }
       list.append(row.el);
@@ -1388,7 +1490,8 @@
     }
     roots.forEach((path) => {
       const row = plainRow(path, "", false);
-      row.actions.append(textAction("移除", () => removeRoot(path)));
+      row.actions.append(textAction("移除", () => removeRoot(path),
+        false, "从代码根目录列表里移除（只改登记，不会删除磁盘上的目录）"));
       list.append(row.el);
     });
   }
