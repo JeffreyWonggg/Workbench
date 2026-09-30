@@ -2856,6 +2856,22 @@ body.is-busy .code-main { box-shadow: var(--card-shadow), inset 0 0 0 1px var(--
 
 .output-entry.bad { border-left-color: var(--danger); }
 
+/* 正在执行的那一条：主题色边框 + 缓慢呼吸，和"成功/失败"一眼可区分 */
+.output-entry.running { border-left-color: var(--accent); }
+
+.output-entry.running .output-state { color: var(--accent); }
+
+.output-entry.running pre { color: var(--muted); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .output-entry.running .output-state { animation: output-pulse 1.2s ease-in-out infinite; }
+}
+
+@keyframes output-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
 .output-head {
   display: flex;
   justify-content: space-between;

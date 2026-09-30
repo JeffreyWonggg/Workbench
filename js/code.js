@@ -1211,9 +1211,19 @@
       if (!ok) return null;
     }
     setBusy(true);
-    const result = await GitApi.exec(state.current, op, fields);
+    // 点击后立刻在输出面板占一条"执行中"，结果回来再填内容。
+    // 之前要等命令跑完才有任何反应，而 fetch/pull/push 动辄几十秒。
+    const command = meta.command || ("git " + op);
+    const entry = beginOutput(command);
+    const startedAt = Date.now();
+    let result = null;
+    try {
+      result = await GitApi.exec(state.current, op, fields);
+    } catch (err) {
+      result = { ok: false, stderr: err && err.message ? err.message : "执行失败" };
+    }
+    endOutput(entry, result, startedAt);
     GitApi.invalidate();
-    pushOutput(op, result, meta.command || ("git " + op));
     await refreshStatus(true);
     await reloadTab(true);
     setBusy(false);
@@ -1272,39 +1282,62 @@
     });
   }
 
-  /* ===== 输出面板 ===== */
+  /* ===== 输出面板 =====
+     两段式：开始执行就先插一条"执行中…"（并展开面板），结束后再把它改成结果。
+     这样慢命令（fetch/pull/push）一按下就有反馈，不用干等。 */
 
-  function pushOutput(op, result, command) {
+  function beginOutput(command) {
     const body = $("output-body");
     const entry = document.createElement("div");
-    entry.className = "output-entry" + (result && result.ok ? "" : " bad");
+    entry.className = "output-entry running";
 
     const head = document.createElement("div");
     head.className = "output-head";
     const label = document.createElement("span");
     label.className = "mono";
-    label.textContent = new Date().toLocaleTimeString() + "  " + (command || op);
-    const state_ = document.createElement("span");
-    state_.className = "output-state";
-    state_.textContent = result && result.ok ? "成功" : "失败";
-    head.append(label, state_);
+    label.textContent = new Date().toLocaleTimeString() + "  " + command;
+    const state = document.createElement("span");
+    state.className = "output-state";
+    state.textContent = "执行中…";
+    head.append(label, state);
     entry.append(head);
 
     const text = document.createElement("pre");
-    text.className = "mono";
-    const merged = [result && result.stdout ? result.stdout.trim() : "", result && result.stderr ? result.stderr.trim() : ""]
-      .filter(Boolean).join("\n");
-    text.textContent = merged || "（没有输出）";
+    text.className = "mono muted";
+    text.textContent = "正在执行，等待 git 返回…";
     entry.append(text);
 
     body.prepend(entry);
     while (body.children.length > 30) body.removeChild(body.lastChild);
-    $("output-hint").textContent = (result && result.ok ? "上次成功" : "上次失败") + " · " + (command || op);
-    // 只有失败才自动展开；成功时不再强制折叠 —— 之前每次都把面板关掉，
-    // 想看一眼 "Everything up-to-date" 之类的输出都看不到。
-    // 展开/折叠完全交给你，手动打开后不会被下一次操作弹回去。
-    const panel = $("code-output");
-    if (result && !result.ok) panel.open = true;
+    // 展开面板并更新折叠状态下的提示行：点下去立刻有反馈
+    $("output-hint").textContent = "执行中 · " + command;
+    $("code-output").open = true;
+    return entry;
+  }
+
+  function endOutput(entry, result, startedAt) {
+    if (!entry) return;
+    const ok = !!(result && result.ok);
+    const state = entry.querySelector(".output-state");
+    const text = entry.querySelector("pre");
+    entry.classList.remove("running");
+    entry.classList.toggle("bad", !ok);
+    if (text) text.classList.remove("muted");
+
+    const seconds = startedAt ? (Date.now() - startedAt) / 1000 : 0;
+    if (state) {
+      // 太快的操作不显示耗时，免得"0.0s"这种噪声
+      state.textContent = (ok ? "成功" : "失败") + (seconds >= 0.3 ? " · " + seconds.toFixed(1) + "s" : "");
+    }
+    const merged = [result && result.stdout ? result.stdout.trim() : "", result && result.stderr ? result.stderr.trim() : ""]
+      .filter(Boolean).join("\n");
+    if (text) text.textContent = merged || "（没有输出）";
+
+    const label = entry.querySelector(".output-head .mono");
+    $("output-hint").textContent = (ok ? "上次成功" : "上次失败") + " · "
+      + (label ? label.textContent.replace(/^\S+\s+/, "") : "");
+    // 只有失败才自动展开；成功时不再强制折叠，展开/折叠交给你
+    if (!ok) $("code-output").open = true;
   }
 
   function notice(message) {

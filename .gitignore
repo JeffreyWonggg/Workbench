@@ -34,3 +34,10 @@ scripts/workbench-host.prev.exe
 Thumbs.db
 desktop.ini
 *.swp
+
+# ===== 开发期临时探针 =====
+# 排障时在根目录生成的临时页面/脚本/截图（约定用下划线开头），不该进版本库。
+# 只匹配根目录，不影响子目录里正常的文件名。
+/_*.html
+/_*.js
+/_*.png
