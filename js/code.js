@@ -787,9 +787,10 @@
       renderChanges();
     });
 
+    const status = changeStatus(file, group);
     const code = document.createElement("span");
-    code.className = "change-code mono";
-    code.textContent = file.untracked ? "??" : file.code;
+    code.className = "change-status " + status.cls;
+    code.textContent = status.label;
     code.title = statusText(file);
 
     const path = document.createElement("span");
@@ -833,6 +834,25 @@
 
     row.append(check, code, path, actions);
     return row;
+  }
+
+  // git 的两位状态码（M / A / ?? …）对不上号，列表里改成一眼能懂的英文单词
+  const CHANGE_STATUS = {
+    M: { label: "Modified", cls: "is-mod" },
+    A: { label: "Added", cls: "is-new" },
+    D: { label: "Deleted", cls: "is-del" },
+    R: { label: "Renamed", cls: "is-rename" },
+    C: { label: "Copied", cls: "is-rename" },
+    U: { label: "Conflict", cls: "is-conflict" },
+    T: { label: "Type change", cls: "is-mod" },
+    "?": { label: "Untracked", cls: "is-new" }
+  };
+
+  // 已暂存的行看暂存区那一列，未暂存的行看工作区那一列
+  function changeStatus(file, group) {
+    if (file.untracked) return CHANGE_STATUS["?"];
+    const letter = group === "staged" ? file.index : file.worktree;
+    return CHANGE_STATUS[letter] || { label: "Changed", cls: "is-mod" };
   }
 
   function statusText(file) {

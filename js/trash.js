@@ -3,10 +3,12 @@
 
   let todos = [];
   let notes = [];
+  let recipes = [];
 
   Nav.boot("trash", async () => {
     todos = await Workbench.loadTodos();
     notes = await Workbench.loadNoteIndex();
+    recipes = await Workbench.loadRecipes();
     document.getElementById("trash-purge").addEventListener("click", purgeAll);
     render();
   });
@@ -21,6 +23,11 @@
       .sort((a, b) => String(b.deletedAt).localeCompare(String(a.deletedAt)));
   }
 
+  function deletedRecipes() {
+    return Workbench.deletedItems(recipes)
+      .sort((a, b) => String(b.deletedAt).localeCompare(String(a.deletedAt)));
+  }
+
   // 资料是加密存储的，只有本标签页解锁过才看得到，且只能在资料库页面恢复
   function deletedResources() {
     const session = Workbench.readVaultSession();
@@ -30,6 +37,7 @@
   function render() {
     const todoRows = deletedTodos();
     const noteRows = deletedNotes();
+    const recipeRows = deletedRecipes();
     const resourceRows = deletedResources();
 
     renderSection("todo", todoRows, (todo) => ({
@@ -48,11 +56,20 @@
       purge: () => purgeNote(note.id)
     }));
 
+    renderSection("recipe", recipeRows, (recipe) => ({
+      title: recipe.name || "未命名",
+      meta: [recipe.category, (recipe.ingredients || []).length + " 样食材"].filter(Boolean).join(" · "),
+      stamp: recipe.deletedAt,
+      restore: () => restoreRecipe(recipe.id),
+      purge: () => purgeRecipe(recipe.id)
+    }));
+
     renderResources(resourceRows);
 
-    const total = todoRows.length + noteRows.length + (resourceRows ? resourceRows.length : 0);
+    const total = todoRows.length + noteRows.length + recipeRows.length
+      + (resourceRows ? resourceRows.length : 0);
     document.getElementById("trash-summary").textContent = total === 0
-      ? "回收站是空的。删除的待办和笔记会先放到这里，可以随时恢复。"
+      ? "回收站是空的。删除的待办、笔记和菜谱会先放到这里，可以随时恢复。"
       : `共 ${total} 项。恢复后回到原来的位置；「彻底删除」不可撤销。`;
   }
 
@@ -62,7 +79,8 @@
     list.innerHTML = "";
     count.textContent = rows.length ? `${rows.length} 项` : "";
     if (rows.length === 0) {
-      list.append(emptyLine(kind === "todo" ? "没有待办在回收站。" : "没有笔记在回收站。"));
+      const emptyText = { todo: "没有待办在回收站。", note: "没有笔记在回收站。", recipe: "没有菜谱在回收站。" };
+      list.append(emptyLine(emptyText[kind] || "这里没有内容。"));
       return;
     }
     rows.forEach((item) => {
@@ -195,6 +213,26 @@
     Nav.toast("已恢复到笔记");
   }
 
+  async function restoreRecipe(id) {
+    const recipe = recipes.find((item) => item.id === id);
+    if (!recipe) return;
+    recipe.deletedAt = "";
+    recipe.updatedAt = new Date().toISOString();
+    await Workbench.saveRecipes(recipes);
+    render();
+    Nav.toast("已恢复到菜谱");
+  }
+
+  async function purgeRecipe(id) {
+    const recipe = recipes.find((item) => item.id === id);
+    if (!recipe) return;
+    if (!confirm(`彻底删除「${recipe.name || "未命名"}」？不可恢复。`)) return;
+    recipes = recipes.filter((item) => item.id !== id);
+    await Workbench.saveRecipes(recipes);
+    render();
+    Nav.toast("已彻底删除");
+  }
+
   async function purgeNote(id) {
     const note = notes.find((item) => item.id === id);
     if (!note) return;
@@ -208,16 +246,24 @@
   async function purgeAll() {
     const todoRows = deletedTodos();
     const noteRows = deletedNotes();
-    if (todoRows.length === 0 && noteRows.length === 0) {
-      Nav.toast("回收站里没有可清理的待办或笔记");
+    const recipeRows = deletedRecipes();
+    if (todoRows.length === 0 && noteRows.length === 0 && recipeRows.length === 0) {
+      Nav.toast("回收站里没有可清理的待办、笔记或菜谱");
       return;
     }
-    const message = `彻底删除 ${todoRows.length} 条待办和 ${noteRows.length} 篇笔记？不可恢复。`;
-    if (!confirm(message)) return;
+    const parts = [];
+    if (todoRows.length) parts.push(`${todoRows.length} 条待办`);
+    if (noteRows.length) parts.push(`${noteRows.length} 篇笔记`);
+    if (recipeRows.length) parts.push(`${recipeRows.length} 道菜谱`);
+    if (!confirm(`彻底删除 ${parts.join("、")}？不可恢复。`)) return;
     todos = Workbench.activeItems(todos);
     await Workbench.saveTodos(todos);
     for (const note of noteRows) {
       await Workbench.deleteNote(note.id);
+    }
+    if (recipeRows.length) {
+      recipes = Workbench.activeItems(recipes);
+      await Workbench.saveRecipes(recipes);
     }
     notes = await Workbench.loadNoteIndex();
     Nav.refreshBadges();

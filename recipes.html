@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>菜谱</title>
+  <meta name="color-scheme" content="dark light">
+  <link rel="preload" href="fonts/inter-latin-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/jetbrains-mono-latin-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="css/app.css">
+  <script>try{document.documentElement.dataset.theme=localStorage.getItem("wb-theme")||"light"}catch(e){document.documentElement.dataset.theme="light"}</script>
+</head>
+<body>
+  <div id="shell">
+    <aside id="sidebar"></aside>
+    <main id="main">
+      <div id="gate" hidden></div>
+      <div id="content" hidden>
+        <header class="page-head">
+          <div>
+            <p class="kicker">菜谱</p>
+            <h1>菜谱记录</h1>
+            <p class="sub" id="recipe-count"></p>
+          </div>
+          <div class="row-actions">
+            <button type="button" id="recipe-add" class="btn primary">新增菜谱</button>
+          </div>
+        </header>
+
+        <div class="filters">
+          <div class="recipe-search">
+            <svg class="ico" aria-hidden="true"><use href="#i-search"></use></svg>
+            <input id="recipe-search" type="search" placeholder="搜索菜名、分类、食材或步骤…" aria-label="搜索菜谱" autocomplete="off">
+          </div>
+          <div id="recipe-categories" class="chips"></div>
+        </div>
+
+        <div id="recipe-list" class="recipe-grid"></div>
+      </div>
+    </main>
+  </div>
+
+  <dialog id="recipe-dialog" class="code-dialog recipe-dialog">
+    <form id="recipe-form">
+      <h2 id="recipe-dialog-title">新增菜谱</h2>
+      <p class="sub">食材和步骤都按「一行一项」写，展示时会逐条列出来。</p>
+      <div class="form-grid">
+        <label class="wide">
+          <span>菜名</span>
+          <input id="recipe-name" type="text" placeholder="例如：番茄炒蛋" autocomplete="off" required>
+        </label>
+        <label>
+          <span>分类</span>
+          <input id="recipe-category" type="text" list="recipe-category-options" placeholder="例如：家常菜" autocomplete="off">
+        </label>
+        <datalist id="recipe-category-options"></datalist>
+        <label class="wide">
+          <span>食材清单</span>
+          <textarea id="recipe-ingredients" rows="5" placeholder="一行一样，例如：&#10;番茄 2 个&#10;鸡蛋 3 个&#10;盐 少许"></textarea>
+        </label>
+        <label class="wide">
+          <span>做法步骤</span>
+          <textarea id="recipe-steps" rows="6" placeholder="一行一步，例如：&#10;鸡蛋打散，加少许盐&#10;热锅倒油，先炒蛋盛出&#10;再下番茄炒软，回锅炒匀"></textarea>
+        </label>
+      </div>
+      <p id="recipe-error" class="vault-error" hidden></p>
+      <div class="dialog-actions">
+        <span class="dialog-spacer"></span>
+        <button type="button" id="recipe-cancel" class="btn">取消</button>
+        <button type="submit" id="recipe-save" class="btn primary">保存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="recipe-del-dialog" class="code-dialog">
+    <form id="recipe-del-form">
+      <h2>删除菜谱</h2>
+      <p id="recipe-del-text" class="sub"></p>
+      <div class="dialog-actions">
+        <span class="dialog-spacer"></span>
+        <button type="button" id="recipe-del-cancel" class="btn">取消</button>
+        <button type="submit" id="recipe-del-ok" class="btn danger">删除</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="js/storage.js"></script>
+  <script src="js/model.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/recipes.js"></script>
+</body>
+</html>

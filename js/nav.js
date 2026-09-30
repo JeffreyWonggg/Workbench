@@ -6,6 +6,7 @@
     { id: "weekly", href: "weekly.html", label: "周报", icon: "weekly" },
     { id: "notes", href: "notes.html", label: "笔记", icon: "notes" },
     { id: "resources", href: "resources.html", label: "资料库", icon: "resources" },
+    { id: "recipes", href: "recipes.html", label: "菜谱", icon: "recipe" },
     { id: "code", href: "code.html", label: "代码", icon: "code" },
     { id: "lan", href: "lan.html", label: "局域网传文件", icon: "lan" },
     { id: "sn", href: "sn.html", label: "产品目录查询", icon: "sn" },
@@ -47,6 +48,7 @@
     project: '<path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/>',
     run: '<path d="M4 5.5h16v13H4z"/><path d="M9.5 9.2l5 2.8-5 2.8z"/>',
     code: '<circle cx="6.5" cy="6.5" r="2.4"/><circle cx="6.5" cy="17.5" r="2.4"/><circle cx="17.5" cy="12" r="2.4"/><path d="M6.5 9v6"/><path d="M8.9 6.5h2.4a3.8 3.8 0 0 1 3.8 3.8"/>',
+    recipe: '<path d="M4 11.5h13a6.5 6.5 0 0 1-6.5 6.5A6.5 6.5 0 0 1 4 11.5z"/><path d="M4 11.5c0-2 1.6-3.5 3.6-3.5h5.8c2 0 3.6 1.5 3.6 3.5"/><path d="M20 6.5v11"/><path d="M2.8 20.5h15.4"/>',
     refresh: '<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4.5V9H15"/>',
     upload: '<path d="M12 19.5V8.5M7.5 13L12 8.5l4.5 4.5"/><path d="M5 4.5h14"/>',
     download: '<path d="M12 4.5v11M7.5 11L12 15.5l4.5-4.5"/><path d="M5 19.5h14"/>',
@@ -562,7 +564,7 @@
     input.id = "palette-input";
     input.type = "text";
     input.autocomplete = "off";
-    input.placeholder = "跳转页面，或搜索待办 / 笔记 / 资料…";
+    input.placeholder = "跳转页面，或搜索待办 / 笔记 / 资料 / 软件号 / 菜谱…";
     input.setAttribute("aria-label", "命令面板");
     const list = document.createElement("div");
     list.id = "palette-list";
@@ -632,6 +634,9 @@
     try {
       paletteData.software = Workbench.activeItems(await Workbench.loadSoftware());
     } catch (err) { /* ignore */ }
+    try {
+      paletteData.recipes = Workbench.activeItems(await Workbench.loadRecipes());
+    } catch (err) { /* ignore */ }
     renderPalette();
   }
 
@@ -670,6 +675,13 @@
         const text = [item.name, item.softwareId, item.project, item.notes].filter(Boolean).join(" ");
         if (text.toLowerCase().includes(q)) {
           items.push({ kind: "软件号", label: item.name || text, href: "code.html" });
+        }
+      });
+      (data.recipes || []).forEach((item) => {
+        const text = [item.name, item.category].concat(item.ingredients || [], item.steps || [])
+          .filter(Boolean).join(" ");
+        if (text.toLowerCase().includes(q)) {
+          items.push({ kind: "菜谱", label: item.name || text, href: "recipes.html#" + encodeURIComponent(item.id) });
         }
       });
     }
@@ -737,7 +749,7 @@
       if (opened) return;
       if (event.key === "/") {
         event.preventDefault();
-        const search = document.querySelector("#note-search, #resource-search, #sn-input");
+        const search = document.querySelector("#note-search, #resource-search, #sn-input, #recipe-search");
         if (search) search.focus();
         else openPalette();
         return;

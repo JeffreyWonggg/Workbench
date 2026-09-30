@@ -292,6 +292,33 @@
     }));
   }
 
+  // 数组字段容错：只保留去空白后的非空字符串。也兼容手写数据时把一个字段
+  // 写成多行文本的情况（按行切开），免得手改坏一次页面就崩。
+  function toLineArray(value) {
+    const source = Array.isArray(value) ? value : String(value == null ? "" : value).split(/\r?\n/);
+    return source
+      .map((item) => String(item == null ? "" : item).trim())
+      .filter((item) => item.length > 0);
+  }
+
+  // 菜谱：明文 recipes.json。食材与步骤存成字符串数组（编辑器里一行一项），
+  // 这样展示时能逐条渲染，将来要加"合并购物清单"之类也不必迁移数据。
+  function normalizeRecipes(list) {
+    if (!Array.isArray(list)) return [];
+    return list
+      .filter((item) => item && typeof item === "object")
+      .map((item, index) => ({
+        id: String(item.id || "").trim() || "rcp-" + (index + 1),
+        name: String(item.name || "").trim(),
+        category: String(item.category || "").trim(),
+        ingredients: toLineArray(item.ingredients),
+        steps: toLineArray(item.steps),
+        createdAt: String(item.createdAt || ""),
+        updatedAt: String(item.updatedAt || ""),
+        deletedAt: String(item.deletedAt || "")
+      }));
+  }
+
   function todoWeekIso(todo) {
     if (todo.state === "DONE" && todo.doneAt) return todo.doneAt;
     return todo.date || todo.updatedAt || "";
@@ -369,6 +396,7 @@
     normalizeTools,
     normalizeGit,
     normalizeSoftware,
+    normalizeRecipes,
     isDeleted,
     activeItems,
     deletedItems,
@@ -575,6 +603,16 @@
     async saveSoftware(list) {
       await this.writeJson("software.json", normalizeSoftware(list));
       root.dispatchEvent(new CustomEvent("workbench-software"));
+    },
+
+    async loadRecipes() {
+      const list = await this.readJson("recipes.json", []);
+      return normalizeRecipes(list);
+    },
+
+    async saveRecipes(list) {
+      await this.writeJson("recipes.json", normalizeRecipes(list));
+      root.dispatchEvent(new CustomEvent("workbench-recipes"));
     },
 
     async loadReports() {

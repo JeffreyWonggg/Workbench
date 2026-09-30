@@ -2658,7 +2658,7 @@ body.is-busy .code-main { box-shadow: var(--card-shadow), inset 0 0 0 1px var(--
 
 .change-row {
   display: grid;
-  grid-template-columns: auto 32px minmax(0, 1fr) auto;
+  grid-template-columns: auto 96px minmax(0, 1fr) auto;
   gap: var(--space-2);
   align-items: center;
   padding: 5px var(--space-3);
@@ -2682,12 +2682,30 @@ body.is-busy .code-main { box-shadow: var(--card-shadow), inset 0 0 0 1px var(--
 
 .change-row:hover { background: var(--hover); }
 
-.change-code {
+/* 状态列：显示英文单词（Modified / Untracked …），颜色区分改动类型 */
+.change-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 2px 6px;
+  border-radius: 999px;
   font-size: var(--text-xs);
-  font-weight: 700;
-  color: var(--accent-strong);
-  text-align: center;
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--pill-nostart-bg);
+  color: var(--pill-nostart-ink);
 }
+
+.change-status.is-new { background: var(--pill-done-bg); color: var(--pill-done-ink); }
+
+.change-status.is-mod { background: var(--pill-hold-bg); color: var(--pill-hold-ink); }
+
+.change-status.is-del { background: var(--danger-soft); color: var(--danger); }
+
+.change-status.is-rename { background: var(--pill-doing-bg); color: var(--pill-doing-ink); }
+
+.change-status.is-conflict { background: var(--danger-soft); color: var(--danger); }
 
 .change-path { font-size: var(--text-sm); overflow-wrap: anywhere; }
 
@@ -2977,7 +2995,7 @@ body.is-busy .code-main { box-shadow: var(--card-shadow), inset 0 0 0 1px var(--
 }
 
 @media (max-width: 680px) {
-  .change-row { grid-template-columns: auto 28px minmax(0, 1fr); }
+  .change-row { grid-template-columns: auto 88px minmax(0, 1fr); }
   .change-actions { grid-column: 1 / -1; justify-content: flex-end; }
   .commit-head { grid-template-columns: 68px minmax(0, 1fr); }
   .commit-meta { grid-column: 1 / -1; }
@@ -3048,3 +3066,221 @@ body.is-busy .code-main { box-shadow: var(--card-shadow), inset 0 0 0 1px var(--
 }
 
 .publish-tag-hint span { flex: 1 1 240px; }
+
+/* ===== 菜谱页 ===== */
+
+/* 搜索框：外框承担聚焦描边，输入框自身无边框（它不在全局 input 样式列表里） */
+.recipe-search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--card-line);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  box-shadow: var(--card-shadow);
+  backdrop-filter: blur(18px) saturate(180%);
+  -webkit-backdrop-filter: blur(18px) saturate(180%);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.recipe-search:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.recipe-search .ico { color: var(--muted); }
+
+.recipe-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  padding: 10px 0;
+  background: transparent;
+}
+
+.recipe-search input:focus { outline: none; box-shadow: none; }
+
+/* 卡片网格：宽屏两列起，窄屏单列 */
+.recipe-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: var(--space-4);
+  align-items: start;
+  margin-top: var(--space-3);
+}
+
+.recipe-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.recipe-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--card-shadow), 0 10px 24px rgba(15, 23, 42, 0.10);
+}
+
+/* 从别处跳进来时定位高亮 */
+.recipe-card.is-focus { box-shadow: var(--card-shadow), inset 0 0 0 2px var(--accent); }
+
+.recipe-card-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.recipe-name {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.recipe-pill {
+  flex: none;
+  padding: 1px 9px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: var(--text-xs);
+  font-weight: 500;
+}
+
+/* 操作按钮平时低对比，悬停或键盘聚焦时才清晰 */
+.recipe-actions {
+  display: flex;
+  flex: none;
+  gap: var(--space-1);
+  margin-left: auto;
+  opacity: 0.6;
+  transition: opacity 0.15s ease;
+}
+
+.recipe-card:hover .recipe-actions,
+.recipe-card:focus-within .recipe-actions { opacity: 1; }
+
+.recipe-actions .linkish.danger:hover { color: var(--danger); background: var(--danger-soft); }
+
+.recipe-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.recipe-block-title {
+  margin: 0 0 4px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+/* 食材：小圆点 + 逐行 */
+.recipe-ingredients {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.recipe-ingredients li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.recipe-ingredients li::before {
+  content: "";
+  flex: none;
+  width: 5px;
+  height: 5px;
+  margin-top: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.75;
+}
+
+/* 做法：序号徽标 + 逐行 */
+.recipe-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: recipe-step;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.recipe-steps li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.recipe-steps li::before {
+  counter-increment: recipe-step;
+  content: counter(recipe-step);
+  flex: none;
+  min-width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 20px;
+  text-align: center;
+}
+
+.recipe-none,
+.recipe-more {
+  margin: 0;
+  font-size: var(--text-xs);
+}
+
+.recipe-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-top: auto;
+}
+
+.recipe-stamp { font-size: var(--text-xs); }
+
+.recipe-empty {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+}
+
+.recipe-dialog { width: min(680px, calc(100vw - 32px)); }
+
+.recipe-dialog textarea { min-height: 96px; }
+
+@media (max-width: 680px) {
+  .recipe-grid { grid-template-columns: minmax(0, 1fr); }
+  .recipe-actions { opacity: 1; }
+  .recipe-dialog { padding: var(--space-4); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .recipe-card { transition: none; }
+  .recipe-card:hover { transform: none; }
+}
