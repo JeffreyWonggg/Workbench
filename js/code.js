@@ -1222,7 +1222,7 @@
     } else {
       const reason = GitApi.errorText(result);
       // 首次推送最常见的两个坑：没有远端、没有任何提交。都给能点的入口，别让人去猜。
-      if (/No configured push destination|no upstream branch|No such remote/i.test(reason)) {
+      if (/No configured push destination|no upstream branch|No such remote|does not appear to be a git repository|Could not read from remote repository/i.test(reason)) {
         Nav.toast("还没有远端地址，点这里设置", { label: "设置远端", onSelect: openRemote });
       } else if (/src refspec .* does not match any|does not have any commits/i.test(reason)) {
         Nav.toast("仓库还没有任何提交，先暂存并提交再推送", {
@@ -1300,7 +1300,11 @@
     body.prepend(entry);
     while (body.children.length > 30) body.removeChild(body.lastChild);
     $("output-hint").textContent = (result && result.ok ? "上次成功" : "上次失败") + " · " + (command || op);
-    $("code-output").open = result && !result.ok;
+    // 只有失败才自动展开；成功时不再强制折叠 —— 之前每次都把面板关掉，
+    // 想看一眼 "Everything up-to-date" 之类的输出都看不到。
+    // 展开/折叠完全交给你，手动打开后不会被下一次操作弹回去。
+    const panel = $("code-output");
+    if (result && !result.ok) panel.open = true;
   }
 
   function notice(message) {
