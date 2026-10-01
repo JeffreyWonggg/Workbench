@@ -254,7 +254,7 @@
     folderBtn.addEventListener("click", onFolderClick);
     changeBtn.addEventListener("click", () => connectFolder("pick"));
     projectBtn.addEventListener("click", openProjects);
-    settingsBtn.addEventListener("click", openSettings);
+    settingsBtn.addEventListener("click", () => openSettings());
     mountSyncBadge();
     setupBlockedLinks();
     setupTheme(themeBtn);
@@ -479,7 +479,7 @@
     const status = Workbench.status || {};
     // 手机这类没有文件夹可用的环境，按钮改成进云同步设置
     if (status.unsupported) {
-      if (root.SyncUI) openSettings();
+      if (root.SyncUI) openSettings(null, "sync");
       return undefined;
     }
     return connectFolder(status.needsPermission ? "grant" : "pick");
@@ -1289,10 +1289,18 @@
     dialog.className = "code-dialog wb-settings";
     dialog.innerHTML = [
       "<h2>设置</h2>",
-      '<p class="sub">关掉不用的页面，侧栏和 Ctrl+K 搜索里都不再出现。'
+      '<div class="settings-tabs" role="tablist">',
+      '  <button type="button" class="settings-tab is-active" data-tab="pages" role="tab" aria-selected="true">页面</button>',
+      '  <button type="button" class="settings-tab" data-tab="sync" role="tab" aria-selected="false">云同步</button>',
+      "</div>",
+      '<div class="settings-pane" data-pane="pages" role="tabpanel">',
+      '  <p class="sub">关掉不用的页面，侧栏和 Ctrl+K 搜索里都不再出现。'
         + "页面本身还在，直接输网址照样能打开；位置也保留，重新打开时回到原处。</p>",
-      '<div class="settings-list" id="wb-settings-list"></div>',
-      '<div class="sync-slot" id="wb-sync-slot"></div>',
+      '  <div class="settings-list" id="wb-settings-list"></div>',
+      "</div>",
+      '<div class="settings-pane" data-pane="sync" role="tabpanel" hidden>',
+      '  <div class="sync-slot" id="wb-sync-slot"></div>',
+      "</div>",
       '<div class="dialog-actions">',
       '  <button type="button" id="wb-settings-all" class="btn">全部打开</button>',
       '  <span class="dialog-spacer"></span>',
@@ -1306,7 +1314,25 @@
       paintSettings();
       repaintNav();
     });
+    dialog.querySelectorAll(".settings-tab").forEach((tab) => {
+      tab.addEventListener("click", () => switchSettingsTab(dialog, tab.dataset.tab));
+    });
     return dialog;
+  }
+
+  // 两个标签页各管一类：页面开关、云同步。只显示当前那一页，
+  // 「全部打开」只对页面这页有意义，跟着一起收起来。
+  function switchSettingsTab(dialog, name) {
+    dialog.querySelectorAll(".settings-tab").forEach((tab) => {
+      const on = tab.dataset.tab === name;
+      tab.classList.toggle("is-active", on);
+      tab.setAttribute("aria-selected", on ? "true" : "false");
+    });
+    dialog.querySelectorAll(".settings-pane").forEach((pane) => {
+      pane.hidden = pane.dataset.pane !== name;
+    });
+    const all = dialog.querySelector("#wb-settings-all");
+    if (all) all.hidden = name !== "pages";
   }
 
   function paintSettings() {
@@ -1389,9 +1415,11 @@
     if (nav) renderNavItems(nav, activePage);
   }
 
-  function openSettings(focusId) {
+  // tab 传 "sync" 就落在云同步那一页（默认「页面」）；focusId 用来高亮某一行
+  function openSettings(focusId, tab) {
     paintSettings();
     const dialog = settingsDialog();
+    switchSettingsTab(dialog, tab === "sync" ? "sync" : "pages");
     if (!dialog.open) dialog.showModal();
     if (focusId) highlightSetting(dialog, focusId);
   }

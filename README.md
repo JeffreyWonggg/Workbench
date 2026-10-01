@@ -141,6 +141,8 @@ Workbench/
 ├─ about.json             「关于」页的全部文案（可自行编辑）
 ├─ css/app.css            全部样式（含深浅两套主题）
 ├─ css/chart.css          「记谱」页样式（谱面等宽排版、编辑器、预览）
+├─ manifest.json          PWA 清单：应用名与各尺寸图标，装成应用后任务栏 / 标题栏图标不再糊
+├─ icons/                 16~512 各尺寸 PNG 图标（由 favicon.svg 渲染而来）
 ├─ fonts/                 本地字体
 ├─ js/
 │  ├─ nav.js              侧栏、导航、设置面板、命令面板、Toast、确认弹窗、公共目录选择器

@@ -4568,8 +4568,7 @@ sealed class WorkbenchHost {
       WindowState = FormWindowState.Minimized;
 
       ContextMenuStrip menu = new ContextMenuStrip();
-      menu.Items.Add(MakeItem("打开工作台", delegate { OpenWorkbench(false); }));
-      menu.Items.Add(MakeItem("打开同步状态", delegate { OpenWorkbench(true); }));
+      menu.Items.Add(MakeItem("打开工作台", delegate { OpenWorkbench(); }));
       menu.Items.Add(new ToolStripSeparator());
       menu.Items.Add(MakeItem("启用局域网访问", delegate { RunBatch("启用局域网访问.bat"); }));
       autoItem = MakeItem("开机自启", delegate { ToggleAutoStart(); });
@@ -4582,7 +4581,7 @@ sealed class WorkbenchHost {
       notify.Icon = BuildTrayIcon();
       notify.Text = "工作台";
       notify.ContextMenuStrip = menu;
-      notify.DoubleClick += delegate { OpenWorkbench(false); };
+      notify.DoubleClick += delegate { OpenWorkbench(); };
       notify.Visible = true;
     }
 
@@ -4675,9 +4674,11 @@ sealed class WorkbenchHost {
     }
   }
 
-  // 和「打开工作台.bat」一个优先级：Edge --app → Chrome --app → 系统默认浏览器
-  static void OpenWorkbench(bool withSync) {
-    string url = "http://127.0.0.1:" + Port + "/index.html" + (withSync ? "?sync=1" : "");
+  // 打开工作台：优先启动「已经装好的应用」——那样是独立窗口、任务栏上是工作台自己的图标。
+  // 没装才退回 --app=，那只是个不带地址栏的浏览器窗口，任务栏图标还是浏览器自己的。
+  // 和「打开工作台.bat」一个优先级：Edge → Chrome → 系统默认浏览器
+  static void OpenWorkbench() {
+    string url = "http://127.0.0.1:" + Port + "/index.html";
     string[] candidates = new string[] {
       Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86) + @"\Microsoft\Edge\Application\msedge.exe",
       Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles) + @"\Microsoft\Edge\Application\msedge.exe",
@@ -4686,9 +4687,15 @@ sealed class WorkbenchHost {
       Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86) + @"\Google\Chrome\Application\chrome.exe",
       Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) + @"\Google\Chrome\Application\chrome.exe"
     };
+    string appId = InstalledEdgeAppId();
     for (int i = 0; i < candidates.Length; i++) {
       try {
         if (string.IsNullOrEmpty(candidates[i]) || !File.Exists(candidates[i])) continue;
+        bool isEdge = candidates[i].IndexOf("Edge", StringComparison.OrdinalIgnoreCase) >= 0;
+        if (appId != null && isEdge) {
+          Process.Start(new ProcessStartInfo(candidates[i], "--app-id=" + appId));
+          return;
+        }
         Process.Start(new ProcessStartInfo(candidates[i], "--app=" + url));
         return;
       } catch (Exception) {
@@ -4698,6 +4705,34 @@ sealed class WorkbenchHost {
       Process.Start(new ProcessStartInfo(url));
     } catch (Exception) {
     }
+  }
+
+  // 找 Edge 里已经装好的工作台：装在「User Data\<配置>\Web Applications\_crx_<appid>\」，
+  // 目录里的 .ico 用的就是应用名，靠它认出是哪一个。没装返回 null。
+  static string InstalledEdgeAppId() {
+    try {
+      string edgeData = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "Microsoft", "Edge", "User Data");
+      if (!Directory.Exists(edgeData)) return null;
+      foreach (string profile in Directory.GetDirectories(edgeData)) {
+        string webApps = Path.Combine(profile, "Web Applications");
+        if (!Directory.Exists(webApps)) continue;
+        foreach (string dir in Directory.GetDirectories(webApps)) {
+          string folder = Path.GetFileName(dir);
+          if (!folder.StartsWith("_crx_")) continue;
+          foreach (string icon in Directory.GetFiles(dir, "*.ico")) {
+            string label = Path.GetFileNameWithoutExtension(icon);
+            if (label.IndexOf("工作台") >= 0
+              || label.IndexOf("Workbench", StringComparison.OrdinalIgnoreCase) >= 0) {
+              return folder.Substring("_crx_".Length).Trim('_');
+            }
+          }
+        }
+      }
+    } catch (Exception) {
+    }
+    return null;
   }
 
   static void RunBatch(string fileName) {
