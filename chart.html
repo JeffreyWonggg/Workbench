@@ -21,7 +21,7 @@
         <header class="page-head">
           <div>
             <p class="kicker">记谱</p>
-            <h1>吉他和弦谱</h1>
+            <h1>和弦谱</h1>
             <p class="sub" id="chart-count"></p>
           </div>
           <div class="row-actions">
@@ -36,7 +36,6 @@
             <input id="chart-search" type="search" placeholder="搜索歌名、调或谱面内容…" aria-label="搜索歌曲" autocomplete="off">
           </div>
           <div id="chart-keys" class="chips"></div>
-          <div id="chart-sort" class="chips"></div>
         </div>
 
         <div id="chart-list" class="chart-grid"></div>
@@ -68,11 +67,6 @@
         <button type="button" id="chart-format" class="btn">对齐格式化</button>
         <button type="button" id="chart-recommend" class="btn">推荐调</button>
         <span class="chart-tool-sep"></span>
-        <span class="muted">试听</span>
-        <span class="seg" id="chart-preview-mode">
-          <button type="button" class="seg-btn on" data-mode="block">块和弦</button>
-          <button type="button" class="seg-btn" data-mode="arpeggio">琶音</button>
-        </span>
         <label class="chart-volume">
           <span class="muted">音量</span>
           <input id="chart-volume" type="range" min="0" max="100" step="5" value="80">
@@ -109,8 +103,6 @@
     <p class="sub" id="chart-view-meta"></p>
     <div id="chart-sheet" class="chart-sheet"></div>
     <div class="dialog-actions">
-      <button type="button" id="chart-view-transpose" class="btn">转调</button>
-      <button type="button" id="chart-view-txt" class="btn">导出 TXT</button>
       <button type="button" id="chart-view-copy" class="btn">复制谱面</button>
       <button type="button" id="chart-view-print" class="btn">打印 / PDF</button>
       <span class="dialog-spacer"></span>

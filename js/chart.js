@@ -11,7 +11,7 @@
 
   const SONGS_FILE = "charts.json";
   const SETTINGS_FILE = "chart-settings.json";
-  const SETTINGS_DEFAULT = { favorites: [], weight: 0, volume: 80, mode: "block" };
+  const SETTINGS_DEFAULT = { favorites: [], weight: 0, volume: 80 };
   const NO_KEY = "未标调";   // 没填调的歌曲在筛选条里的分组名
 
   const state = {
@@ -19,7 +19,6 @@
     settings: Object.assign({}, SETTINGS_DEFAULT),
     keyword: "",
     keyFilter: "",
-    sort: "updated",
     editing: "",        // 正在编辑的歌曲 id，空 = 新增
     viewing: "",        // 正在查看的歌曲 id
     transposing: "",    // 正在转调的歌曲 id
@@ -59,8 +58,7 @@
     return {
       favorites: toList(options.favorites),
       weight: Number.isFinite(weight) ? Math.min(1, Math.max(0, weight)) : 0,
-      volume: Number.isFinite(volume) ? Math.min(100, Math.max(0, volume)) : 80,
-      mode: options.mode === "arpeggio" ? "arpeggio" : "block"
+      volume: Number.isFinite(volume) ? Math.min(100, Math.max(0, volume)) : 80
     };
   }
 
@@ -70,9 +68,7 @@
     state.settings = normalizeSettings(await Workbench.readJson(SETTINGS_FILE, SETTINGS_DEFAULT));
     Audio.setVolume(state.settings.volume / 100);
     $("chart-volume").value = String(state.settings.volume);
-    setMode(state.settings.mode);
     renderKeyChips();
-    renderSortChips();
     renderList();
     renderCount();
   }
@@ -105,10 +101,8 @@
       if (!keyword) return true;
       return [item.title, item.key, item.content].join(" ").toLowerCase().indexOf(keyword) >= 0;
     });
+    // 固定按最近更新排在前，同一天的再按歌名
     return rows.sort((a, b) => {
-      if (state.sort === "title") {
-        return (a.title || "未命名").localeCompare(b.title || "未命名", "zh");
-      }
       const left = String(b.updatedAt || b.createdAt || "");
       const right = String(a.updatedAt || a.createdAt || "");
       return left.localeCompare(right) || (a.title || "").localeCompare(b.title || "", "zh");
@@ -141,27 +135,13 @@
     renderCount();
   }
 
-  function renderSortChips() {
-    const box = $("chart-sort");
-    box.innerHTML = "";
-    const options = [["updated", "最近更新"], ["title", "歌名"]];
-    options.forEach((pair) => {
-      box.append(chip(pair[0], pair[1], 0, state.sort === pair[0], () => {
-        state.sort = pair[0];
-        renderSortChips();
-        renderList();
-      }, true));
-    });
-  }
-
-  // count 为 0 时不显示数字，纯粹当按钮用的开关
-  function chip(value, label, count, on, action, plain) {
+  function chip(value, label, count, on, action) {
     const el = document.createElement("button");
     el.type = "button";
     el.className = "chip" + (on ? " on" : "");
     el.dataset.value = value;
     el.setAttribute("aria-pressed", on ? "true" : "false");
-    el.textContent = plain || count === 0 ? label : label + "（" + count + "）";
+    el.textContent = label + "（" + count + "）";
     if (action) el.addEventListener("click", action);
     return el;
   }
@@ -367,7 +347,6 @@
       state.keyword = "";
       state.keyFilter = "";
       $("chart-search").value = "";
-      renderSortChips();
       renderKeyChips();
       renderList();
       renderCount();
@@ -411,11 +390,6 @@
       renderChordPanel();
       Nav.toast("推荐调：" + best.name + "（黑键 " + best.blackKeyCount + " 处）");
     });
-    $("chart-preview-mode").addEventListener("click", (event) => {
-      const hit = event.target.closest("[data-mode]");
-      if (!hit) return;
-      saveSettings({ mode: hit.dataset.mode });
-    });
     $("chart-volume").addEventListener("input", (event) => {
       saveSettings({ volume: Number(event.target.value) });
     });
@@ -423,7 +397,7 @@
       const hit = event.target.closest("[data-chord]");
       if (!hit) return;
       const name = hit.dataset.chord;
-      if (event.shiftKey) return Audio.playChord(name, state.settings.mode, 1.0);
+      if (event.shiftKey) return Audio.playChord(name, "block", 1.0);
       return insertChord(name);
     });
     keySelect.addEventListener("change", () => {
@@ -454,12 +428,6 @@
       if (!hit) return;
       event.preventDefault();   // 别让 textarea 先失焦
       insertChord(hit.dataset.chord);
-    });
-  }
-
-  function setMode(mode) {
-    $("chart-preview-mode").querySelectorAll("[data-mode]").forEach((button) => {
-      button.classList.toggle("on", button.dataset.mode === mode);
     });
   }
 
@@ -671,7 +639,7 @@
   document.addEventListener("click", (event) => {
     const hit = event.target.closest(".chart-chord");
     if (!hit) return;
-    if (!Audio.playChord(hit.dataset.chord, state.settings.mode, 1.0)) return;
+    if (!Audio.playChord(hit.dataset.chord, "block", 1.0)) return;
     hit.classList.add("is-playing");
     setTimeout(() => hit.classList.remove("is-playing"), 400);
   });
@@ -680,15 +648,6 @@
 
   function bindViewer() {
     $("chart-view-close").addEventListener("click", () => $("chart-view").close());
-    $("chart-view-transpose").addEventListener("click", () => {
-      const id = state.viewing;
-      $("chart-view").close();
-      if (id) openTranspose(id);
-    });
-    $("chart-view-txt").addEventListener("click", () => {
-      const item = songById(state.viewing);
-      if (item) downloadTxt(item);
-    });
     $("chart-view-copy").addEventListener("click", () => {
       const item = songById(state.viewing);
       if (item) copyChart(item);
