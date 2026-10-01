@@ -7,6 +7,7 @@
   <meta name="color-scheme" content="dark light">
   <link rel="preload" href="fonts/inter-latin-400.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="fonts/jetbrains-mono-latin-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="css/app.css">
   <script>try{document.documentElement.dataset.theme=localStorage.getItem("wb-theme")||"light"}catch(e){document.documentElement.dataset.theme="light"}</script>
 </head>
@@ -22,13 +23,7 @@
             <h1>工作台</h1>
           </div>
           <div class="row-actions" aria-label="工具栏">
-            <div class="tool-wrap">
-              <button type="button" id="tool-menu-toggle" class="btn primary" aria-expanded="false" aria-haspopup="true">
-                <svg class="ico" aria-hidden="true"><use href="#i-run"></use></svg>
-                工具
-              </button>
-              <div id="tool-menu" class="tool-menu" hidden></div>
-            </div>
+            <button type="button" id="home-layout" class="btn" aria-pressed="false" aria-label="调整卡片布局">布局</button>
           </div>
         </header>
         <form id="capture" class="capture card">
@@ -42,66 +37,72 @@
             <button class="btn primary" type="submit">收下</button>
           </div>
         </form>
-        <section id="usage-card" class="card usage-card" hidden>
-          <div class="card-head">
-            <h2>DeepSeek</h2>
-            <div class="usage-actions">
-              <button type="button" id="usage-refresh" class="linkish">刷新</button>
-              <button type="button" id="usage-note" class="linkish">说明</button>
+        <div id="home-cards" class="home-cards">
+          <section id="usage-card" class="card home-card" data-card="usage" hidden>
+            <div class="card-head">
+              <h2>DeepSeek</h2>
+              <div class="usage-actions">
+                <button type="button" id="usage-refresh" class="linkish">刷新</button>
+                <button type="button" id="usage-note" class="linkish">说明</button>
+              </div>
             </div>
-          </div>
-          <div id="usage-body"></div>
-        </section>
-        <section id="focus-card" class="card focus-card" hidden>
-          <div class="card-head">
-            <h2>今天要做的</h2>
-            <a href="todo.html">全部待办</a>
-          </div>
-          <div id="focus-list" class="focus-list"></div>
-        </section>
-        <div class="home-grid">
-          <section class="card">
+            <div id="usage-body"></div>
+          </section>
+
+          <section id="focus-card" class="card home-card" data-card="focus" hidden>
+            <div class="card-head">
+              <h2>今天要做的</h2>
+              <a href="todo.html">全部待办</a>
+            </div>
+            <div id="focus-list" class="focus-list"></div>
+          </section>
+
+          <section class="card home-card" data-card="doing">
             <div class="card-head">
               <h2>进行中</h2>
               <a href="todo.html">全部待办</a>
             </div>
             <div id="doing-list"></div>
           </section>
-          <section class="card">
+
+          <section class="card home-card" data-card="week">
             <div class="card-head">
               <h2>本周周报</h2>
               <a href="weekly.html?week=current">去写</a>
             </div>
             <div id="week-box"></div>
           </section>
-          <section class="card">
+
+          <section class="card home-card" data-card="notes">
             <div class="card-head">
               <h2>最近笔记</h2>
               <a href="notes.html">全部笔记</a>
             </div>
             <div id="note-box"></div>
           </section>
+
+          <section class="card home-card" data-card="git" hidden>
+            <div class="card-head">
+              <h2>代码仓库</h2>
+              <a href="code.html">去代码页</a>
+            </div>
+            <div id="git-box"></div>
+          </section>
+
+          <section class="card home-card" data-card="ledger" hidden>
+            <div class="card-head">
+              <h2>本月记账</h2>
+              <a href="ledger.html">去记账</a>
+            </div>
+            <div id="ledger-box"></div>
+          </section>
         </div>
       </div>
     </main>
   </div>
-  <dialog id="tool-dialog" class="tool-dialog">
-    <form id="tool-form">
-      <h2>工具</h2>
-      <p class="sub">这里的按钮会启动本机程序。清单保存在数据文件夹的 meta.json 里，换机器或加工具都不用改程序。</p>
-      <div id="tool-rows"></div>
-      <p id="tool-error" class="vault-error" hidden></p>
-      <div class="dialog-actions">
-        <button id="tool-add" class="btn" type="button">添加一项</button>
-        <span class="dialog-spacer"></span>
-        <button id="tool-cancel" class="btn" type="button">取消</button>
-        <button class="btn primary" type="submit">保存</button>
-      </div>
-    </form>
-  </dialog>
-
   <script src="js/storage.js"></script>
   <script src="js/model.js"></script>
+  <script src="js/gitapi.js"></script>
   <script src="js/nav.js"></script>
   <script src="js/vault-crypto.js"></script>
   <script src="js/sync-crypto.js"></script>

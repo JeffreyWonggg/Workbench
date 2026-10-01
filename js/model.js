@@ -177,14 +177,52 @@
       });
   }
 
+  function normalizeLang(lang) {
+    if (!lang) return "";
+    const key = String(lang).toLowerCase().replace(/[^a-z0-9+#]/g, "");
+    const map = {
+      "c++": "cpp", "c#": "csharp", "cs": "csharp", "c": "c",
+      "py": "python", "python": "python",
+      "js": "javascript", "javascript": "javascript",
+      "ts": "typescript", "typescript": "typescript",
+      "sh": "bash", "bash": "bash", "shell": "bash", "zsh": "bash",
+      "go": "go", "rust": "rust", "rs": "rust", "java": "java",
+      "json": "json", "xml": "xml", "html": "xml", "css": "css",
+      "yaml": "yaml", "yml": "yaml", "md": "markdown", "markdown": "markdown",
+      "sql": "sql", "kotlin": "kotlin", "kt": "kotlin", "swift": "swift",
+      "php": "php", "ruby": "ruby", "rb": "ruby", "dart": "dart",
+      "scala": "scala", "lua": "lua", "toml": "toml", "ini": "ini", "r": "r"
+    };
+    return map[key] || key;
+  }
+
+  function highlightCode(code, lang) {
+    if (window.hljs) {
+      try {
+        const clean = code.replace(/\n+$/, "");
+        if (lang && hljs.getLanguage(lang)) {
+          return hljs.highlight(clean, { language: lang, ignoreIllegals: true }).value;
+        }
+        return hljs.highlightAuto(clean).value;
+      } catch (e) { /* 退化到纯文本 */ }
+    }
+    return escapeHtml(code);
+  }
+
   function renderMarkdown(src) {
-    const escaped = escapeHtml(String(src || "").replace(/\r\n/g, "\n"));
+    const raw = String(src || "").replace(/\r\n/g, "\n");
     const fences = [];
-    let text = escaped.replace(/```[^\n]*\n([\s\S]*?)```/g, (_, code) => {
-      const token = `%%FENCE${fences.length}%%`;
-      fences.push(`<pre class="md-pre"><code>${code.replace(/\n$/, "")}</code></pre>`);
-      return token;
-    });
+    // 先用原始文本抽围栏：保留语言名与原文，避免先 escape 导致 hljs 二次转义。
+    // 结束围栏要求独占一行且与开头反引号数量一致（\1）。
+    let text = raw.replace(/(`{3,})([^\n]*)\n([\s\S]*?)\n\s*\1(?=\n|$)/g,
+      (m, fence, info, code) => {
+        const lang = normalizeLang((info.trim().split(/\s+/)[0] || ""));
+        const codeHtml = highlightCode(code, lang);
+        const langAttr = lang ? ` data-lang="${escapeHtml(lang)}"` : "";
+        fences.push(`<pre class="md-pre"${langAttr}><code>${codeHtml}</code></pre>`);
+        return `%%FENCE${fences.length - 1}%%`;
+      });
+    const escaped = escapeHtml(text);
     text = text.replace(/`([^`\n]+)`/g, "<code class=\"md-inline\">$1</code>");
     const lines = text.split("\n");
     let html = "";
@@ -276,7 +314,14 @@
   }
 
   function reportToMarkdown(report) {
-    const lines = [`# ${report.week}周`];
+    const title = (report.endDate && report.spanDays)
+      ? (() => {
+          const end = new Date(report.endDate + "T00:00:00Z");
+          const start = Workbench.addUtcDays(end, -(report.spanDays - 1));
+          return `${Workbench.formatUtcMonthDay(start)} – ${Workbench.formatUtcMonthDay(end)}（${report.spanDays} 天）`;
+        })()
+      : `${report.week}周`;
+    const lines = [`# ${title}`];
     (report.sections || []).forEach((section) => {
       if (!section.project) return;
       lines.push(`### ${section.project}（${formatHours(section.hours)}h）`);
@@ -421,6 +466,50 @@
         updatedAt: String(item.updatedAt || ""),
         deletedAt: String(item.deletedAt || "")
       }));
+  }
+
+  // 记账：明文 ledger.json。金额统一存正数，收/支由 kind 决定——
+  // 手改数据时把 -50 写成 50 也只会变成一笔支出，不会把月度合计算反。
+  function normalizeLedgers(list) {
+    if (!Array.isArray(list)) return [];
+    return list
+      .filter((item) => item && typeof item === "object")
+      .map((item, index) => {
+        const amount = Number(item.amount);
+        return {
+          id: String(item.id || "").trim() || "led-" + (index + 1),
+          date: String(item.date || "").trim() || todayIso(),
+          kind: item.kind === "income" ? "income" : "expense",
+          amount: Number.isFinite(amount) ? Math.abs(amount) : 0,
+          category: String(item.category || "").trim(),
+          project: String(item.project || "").trim(),
+          note: String(item.note || "").trim(),
+          createdAt: String(item.createdAt || ""),
+          updatedAt: String(item.updatedAt || ""),
+          deletedAt: String(item.deletedAt || "")
+        };
+      });
+  }
+
+  // 收藏：明文 files.json。只存索引，文件本体落在 files/ 与 screenshot/ 目录里。
+  // 没有 path 的条目是坏的（读不回本体），直接丢掉。
+  function normalizeFiles(list) {
+    if (!Array.isArray(list)) return [];
+    return list
+      .filter((item) => item && typeof item === "object")
+      .map((item, index) => ({
+        id: String(item.id || "").trim() || "file-" + (index + 1),
+        name: String(item.name || "").trim() || "未命名",
+        path: String(item.path || "").trim(),
+        size: Number(item.size) || 0,
+        type: String(item.type || "").trim(),
+        kind: item.kind === "screenshot" ? "screenshot" : "file",
+        project: String(item.project || "").trim(),
+        note: String(item.note || "").trim(),
+        addedAt: String(item.addedAt || ""),
+        deletedAt: String(item.deletedAt || "")
+      }))
+      .filter((item) => item.path);
   }
 
   // 示例菜谱带上时间戳：越靠前的越新，列表按「最近更新」排下来正好是录入顺序
@@ -774,6 +863,35 @@
     async saveRecipes(list) {
       await this.writeJson("recipes.json", normalizeRecipes(list));
       root.dispatchEvent(new CustomEvent("workbench-recipes"));
+    },
+
+    async loadLedgers() {
+      return normalizeLedgers(await this.readJson("ledger.json", []));
+    },
+
+    async saveLedgers(list) {
+      await this.writeJson("ledger.json", normalizeLedgers(list));
+      root.dispatchEvent(new CustomEvent("workbench-ledger"));
+    },
+
+    async loadFiles() {
+      return normalizeFiles(await this.readJson("files.json", []));
+    },
+
+    async saveFiles(list) {
+      await this.writeJson("files.json", normalizeFiles(list));
+      root.dispatchEvent(new CustomEvent("workbench-files"));
+    },
+
+    // 文件本体（二进制）：拖进来的文件、截图都走这两个
+    async writeFile(path, blob) {
+      await this.fs.writeBinary(path, blob);
+      notifyChange("write", path);
+    },
+
+    async readFile(path) {
+      const buffer = await this.fs.readBinary(path);
+      return buffer == null ? null : new Blob([buffer]);
     },
 
     async loadReports() {

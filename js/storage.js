@@ -204,6 +204,28 @@
     }
   }
 
+  // 二进制：拖进来的文件、截图都走这里。路径里带子目录时会自动建出来
+  async function readBinary(dir, path) {
+    const loc = await resolveParent(dir, path, false);
+    if (!loc) return null;
+    try {
+      const handle = await loc.parent.getFileHandle(loc.name, { create: false });
+      const file = await handle.getFile();
+      return await file.arrayBuffer();
+    } catch (err) {
+      if (err && err.name === "NotFoundError") return null;
+      throw err;
+    }
+  }
+
+  async function writeBinary(dir, path, data) {
+    const loc = await resolveParent(dir, path, true);
+    const handle = await loc.parent.getFileHandle(loc.name, { create: true });
+    const writable = await handle.createWritable();
+    await writable.write(data);
+    await writable.close();
+  }
+
   // 列出某个前缀下的文件（同步时要枚举 notes/ 里的正文）
   async function listFiles(dir, prefix) {
     const clean = String(prefix || "");
@@ -249,6 +271,17 @@
       .sort();
   }
 
+  // IndexedDB 能直接存 Blob（结构化克隆），二进制原样进出
+  async function readIndexedBinary(path) {
+    const value = await idbGet(FILE_DB, String(path));
+    if (value instanceof Blob) return await value.arrayBuffer();
+    return null;
+  }
+
+  async function writeIndexedBinary(path, data) {
+    await idbPut(FILE_DB, String(path), new Blob([data]));
+  }
+
   /* ===== 后端工厂：两种实现接口逐字一致 ===== */
 
   function createLocal(dir) {
@@ -259,6 +292,8 @@
       handle: dir,
       readText: (path) => readText(dir, path),
       writeText: (path, text) => writeText(dir, path, text),
+      readBinary: (path) => readBinary(dir, path),
+      writeBinary: (path, data) => writeBinary(dir, path, data),
       removeFile: (path) => removeFile(dir, path),
       list: (prefix) => listFiles(dir, prefix)
     };
@@ -271,6 +306,8 @@
       handle: null,
       readText: readIndexed,
       writeText: writeIndexed,
+      readBinary: readIndexedBinary,
+      writeBinary: writeIndexedBinary,
       removeFile: removeIndexed,
       list: listIndexed
     };

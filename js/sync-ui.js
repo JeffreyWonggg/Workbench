@@ -188,6 +188,108 @@
     });
   }
 
+  /* ===== 健康度 ===== */
+
+  const HEALTH_TTL = 5000;
+  const ERROR_KIND_LABEL = { network: "网络", credential: "凭证", permission: "权限", conflict: "冲突", unknown: "其它" };
+  const ERROR_KIND_HINT = {
+    network: "连不上云开发环境：先看网络 / 代理，再确认环境 ID 没写错。",
+    credential: "登录或密码没过：到 CloudBase 控制台确认开了「匿名登录」；提示「同步密码不对」就先重新解锁一次。",
+    permission: "像是权限或环境不对：确认环境 ID 属于你自己的账号，云存储没有被停用。",
+    conflict: "另一台设备同时改了同一份数据：下次同步会自动合并，被覆盖的那版会存成冲突副本。",
+    unknown: "原因没归出来，看上面状态里的原始报错。"
+  };
+
+  let healthCache = { at: 0, data: null };
+
+  function kindLabel(kind) {
+    return ERROR_KIND_LABEL[kind] || ERROR_KIND_LABEL.unknown;
+  }
+
+  function kindHint(kind) {
+    return ERROR_KIND_HINT[kind] || ERROR_KIND_HINT.unknown;
+  }
+
+  function buildHealthBox(mode) {
+    const box = el("div", "sync-health");
+    if (!syncReady() || mode === "setup" || !root.Sync.health) {
+      box.hidden = true;
+      return box;
+    }
+    box.append(el("div", "sync-health-head", "健康度"));
+    const body = el("div", "sync-health-body", "正在检查…");
+    box.append(body);
+    fillHealth(body);
+    return box;
+  }
+
+  async function fillHealth(body) {
+    try {
+      if (!healthCache.data || Date.now() - healthCache.at > HEALTH_TTL) {
+        healthCache = { at: Date.now(), data: await root.Sync.health() };
+      }
+      const data = healthCache.data;
+      body.className = "sync-health-body";
+      body.textContent = "";
+      body.append(healthGrid(data));
+      healthHints(data).forEach((text) => body.append(el("div", "sync-health-hint muted", text)));
+    } catch (err) {
+      body.textContent = "健康度读取失败：" + ((err && err.message) || "未知错误");
+    }
+  }
+
+  function healthGrid(data) {
+    const grid = el("div", "sync-health-grid");
+    grid.append(
+      healthItem("上次同步成功",
+        data.lastSyncAt ? ago(data.lastSyncAt) : "还没有成功过",
+        data.lastSyncAt ? "is-ok" : "is-warn"),
+      healthItem("冲突副本",
+        data.conflictCount
+          ? `${data.conflictCount} 份 · 最早 ${ago(data.oldestConflictAt)}`
+          : "没有",
+        data.conflictCount ? "is-warn" : "is-ok"),
+      healthItem("版本差", versionText(data),
+        (data.behind || data.pending) ? "is-warn" : "is-ok"),
+      healthItem("最近一次失败",
+        data.lastError ? `${kindLabel(data.lastError.kind)} · ${ago(data.lastError.at)}` : "没有失败记录",
+        data.lastError ? "is-bad" : "is-ok")
+    );
+    return grid;
+  }
+
+  function healthItem(label, value, tone) {
+    const item = el("div", "sync-health-item " + (tone || ""));
+    item.append(el("span", "sync-health-label", label));
+    item.append(el("b", "sync-health-value", value));
+    return item;
+  }
+
+  function versionText(data) {
+    if (!data.remoteReachable) return "云端读不到";
+    const cloud = data.behind
+      ? `云端领先 ${data.behind} 项（最大差 ${data.behindMax}）`
+      : "云端不领先";
+    const local = data.pending ? `本地待推 ${data.pending} 项` : "本地无待推";
+    return cloud + " · " + local;
+  }
+
+  function healthHints(data) {
+    const hints = [];
+    if (data.lastError) {
+      hints.push("最近一次失败（" + kindLabel(data.lastError.kind) + "）：" + data.lastError.message
+        + "　→　" + kindHint(data.lastError.kind));
+    }
+    if (data.conflictCount) {
+      hints.push(`冲突副本最早的一份是 ${ago(data.oldestConflictAt)}，下面「冲突副本」里可以查看 / 恢复 / 删除。`);
+    }
+    if (!data.remoteReachable && data.remoteMessage) {
+      const kind = root.Sync.classifyError ? root.Sync.classifyError(data.remoteMessage) : "unknown";
+      hints.push("云端清单读不到（" + kindLabel(kind) + "）：" + data.remoteMessage + "　→　" + kindHint(kind));
+    }
+    return hints;
+  }
+
   /* ===== 渲染 ===== */
 
   function buildHead(status) {
@@ -364,6 +466,8 @@
     const conflicts = buildConflicts();
     if (conflicts) section.append(conflicts);
 
+    section.append(buildHealthBox(mode));
+
     if (mode === "ready") {
       const config = currentConfig();
       const qr = buildQr(config);
@@ -501,7 +605,11 @@
     if (!node) return;
     container = node;
     if (!listening && syncReady()) {
-      root.Sync.onChange(() => paint());
+      root.Sync.onChange(() => {
+        // 同步跑完状态就变了，健康度得重新取一次
+        healthCache = { at: 0, data: null };
+        paint();
+      });
       listening = true;
     }
     paint();

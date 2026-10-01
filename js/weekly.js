@@ -35,6 +35,8 @@
   let report = null;
   let saveTimer = 0;
   let dirty = false;
+  let spanDays = 7;
+  let endDate = null;
 
   Nav.boot("weekly", async () => {
     const current = Workbench.isoWeek(new Date());
@@ -65,6 +67,8 @@
     });
     document.getElementById("fill-done").addEventListener("click", fillFromDone);
     document.getElementById("copy-md").addEventListener("click", copyMarkdown);
+    document.getElementById("week-span").addEventListener("change", onSpanChange);
+    document.getElementById("week-end").addEventListener("change", onEndChange);
     const modelSelect = document.getElementById("polish-model");
     MODELS.forEach((item) => {
       const option = document.createElement("option");
@@ -117,9 +121,15 @@
     report.year = year;
     report.week = week;
     if (!Array.isArray(report.sections)) report.sections = [];
+    spanDays = Number(report.spanDays) || 7;
+    const monday = Workbench.weekMonday(year, week);
+    endDate = report.endDate ? new Date(report.endDate + "T00:00:00Z") : Workbench.addUtcDays(monday, 6);
+    report.spanDays = spanDays;
+    report.endDate = endDate.toISOString().slice(0, 10);
     dirty = false;
     paintHeading();
     renderSections();
+    updateSpanControls();
     const last = Workbench.meta.lastWeek;
     if (!last || last.year !== year || last.week !== week) {
       Workbench.meta.lastWeek = { year, week };
@@ -128,13 +138,33 @@
   }
 
   function paintHeading() {
-    const monday = Workbench.weekMonday(year, week);
-    const sunday = Workbench.addUtcDays(monday, 6);
+    const start = Workbench.addUtcDays(endDate, -(spanDays - 1));
     document.getElementById("week-title").textContent = `第 ${week} 周`;
     document.getElementById("week-range").textContent =
-      `${monday.getUTCFullYear()} · ${Workbench.formatUtcMonthDay(monday)} – ${Workbench.formatUtcMonthDay(sunday)}`;
+      `${Workbench.formatUtcMonthDay(start)} – ${Workbench.formatUtcMonthDay(endDate)}（${spanDays} 天）`;
     const total = report.sections.reduce((sum, section) => sum + (Number(section.hours) || 0), 0);
     document.getElementById("hours-total").textContent = `合计 ${Workbench.formatHours(total)} 小时`;
+  }
+
+  function onSpanChange(event) {
+    spanDays = Math.max(1, Math.min(120, Number(event.target.value) || 7));
+    report.spanDays = spanDays;
+    paintHeading();
+    scheduleSave();
+  }
+
+  function onEndChange(event) {
+    const value = event.target.value;
+    if (!value) return;
+    endDate = new Date(value + "T00:00:00Z");
+    report.endDate = value;
+    paintHeading();
+    scheduleSave();
+  }
+
+  function updateSpanControls() {
+    document.getElementById("week-span").value = String(spanDays);
+    document.getElementById("week-end").value = endDate.toISOString().slice(0, 10);
   }
 
   function renderSections() {
@@ -328,8 +358,16 @@
 
   async function fillFromDone() {
     const todos = await Workbench.loadTodos();
+    const start = Workbench.addUtcDays(endDate, -(spanDays - 1));
+    const startMonday = Workbench.weekMonday(start.getUTCFullYear(), Workbench.isoWeek(start).week);
+    const endMonday = Workbench.weekMonday(endDate.getUTCFullYear(), Workbench.isoWeek(endDate).week);
     const done = Workbench.activeItems(todos)
-      .filter((todo) => todo.state === "DONE" && Workbench.inIsoWeek(Workbench.todoWeekIso(todo), year, week));
+      .filter((todo) => {
+        if (todo.state !== "DONE") return false;
+        const tw = Workbench.todoWeekIso(todo);
+        const tm = Workbench.weekMonday(tw.year, tw.week);
+        return tm.getTime() >= startMonday.getTime() && tm.getTime() <= endMonday.getTime();
+      });
     if (done.length === 0) {
       Nav.toast("本周没有已完成的待办");
       return;

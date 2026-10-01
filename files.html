@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>收藏</title>
+  <meta name="color-scheme" content="dark light">
+  <link rel="preload" href="fonts/inter-latin-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/jetbrains-mono-latin-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/app.css">
+  <script>try{document.documentElement.dataset.theme=localStorage.getItem("wb-theme")||"light"}catch(e){document.documentElement.dataset.theme="light"}</script>
+</head>
+<body>
+  <div id="shell">
+    <aside id="sidebar"></aside>
+    <main id="main">
+      <div id="gate" hidden></div>
+      <div id="content" hidden>
+        <header class="page-head">
+          <div>
+            <p class="kicker">收藏</p>
+            <h1>收藏</h1>
+            <p class="sub" id="files-summary"></p>
+          </div>
+          <div class="row-actions">
+            <button type="button" id="files-pick" class="btn">选文件…</button>
+            <button type="button" id="files-pick-dir" class="btn primary">选文件夹…</button>
+          </div>
+        </header>
+
+        <div id="files-drop" class="files-drop">
+          <svg class="ico" aria-hidden="true"><use href="#i-upload"></use></svg>
+          <strong>把文件或整个文件夹拖到这里</strong>
+          <span class="muted">会存进数据文件夹的 <code>files/</code> 目录；截图另存到 <code>screenshot/</code></span>
+        </div>
+
+        <div class="filters">
+          <div class="ledger-filter-row">
+            <div class="seg" id="files-kinds" role="group" aria-label="筛选">
+              <button type="button" class="seg-btn on" data-kind="all">全部</button>
+              <button type="button" class="seg-btn" data-kind="file">文件</button>
+              <button type="button" class="seg-btn" data-kind="screenshot">截图</button>
+            </div>
+            <div class="ledger-search">
+              <svg class="ico" aria-hidden="true"><use href="#i-search"></use></svg>
+              <input id="files-search" type="search" placeholder="搜索文件名或备注…" aria-label="搜索收藏" autocomplete="off">
+            </div>
+          </div>
+        </div>
+
+        <div id="files-list" class="files-grid"></div>
+      </div>
+    </main>
+  </div>
+
+  <dialog id="files-view-dialog" class="code-dialog files-view-dialog">
+    <h2 id="files-view-title">预览</h2>
+    <p class="sub" id="files-view-meta"></p>
+    <div id="files-view-body" class="files-view-body"></div>
+    <div class="dialog-actions">
+      <button type="button" id="files-view-download" class="btn">另存到本机…</button>
+      <span class="dialog-spacer"></span>
+      <button type="button" id="files-view-close" class="btn primary">关闭</button>
+    </div>
+  </dialog>
+
+  <input id="files-input" type="file" multiple hidden>
+  <input id="files-input-dir" type="file" webkitdirectory directory multiple hidden>
+
+  <script src="js/storage.js"></script>
+  <script src="js/model.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/vault-crypto.js"></script>
+  <script src="js/sync-crypto.js"></script>
+  <script src="js/sync-core.js"></script>
+  <script src="js/sync-cloudbase.js"></script>
+  <script src="js/sync-ui.js"></script>
+  <script src="js/files.js"></script>
+</body>
+</html>

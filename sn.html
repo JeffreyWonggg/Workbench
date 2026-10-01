@@ -7,6 +7,7 @@
   <meta name="color-scheme" content="dark light">
   <link rel="preload" href="fonts/inter-latin-400.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="fonts/jetbrains-mono-latin-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="css/app.css">
   <script>try{document.documentElement.dataset.theme=localStorage.getItem("wb-theme")||"light"}catch(e){document.documentElement.dataset.theme="light"}</script>
 </head>
@@ -23,7 +24,7 @@
             <p class="sub">按序列号查索引库，也可以查自己维护的目录。</p>
             <p id="sn-status" class="sub">还没有读取数据库。</p>
           </div>
-          <div class="sn-actions">
+          <div class="row-actions">
             <button type="button" id="sn-pick" class="btn primary">更新数据库</button>
           </div>
         </header>

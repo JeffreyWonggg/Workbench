@@ -49,6 +49,7 @@
     const projectSoftware = software.filter((item) => item.project === name);
     const projectRepos = repos.filter((repo) => repo.project === name);
     return {
+      todos: projectTodos,
       openTodos,
       overdue,
       noteCount: projectNotes.length,
@@ -149,6 +150,7 @@
     renderFiles(name, data);
     renderSoftware(name, data);
     renderRepos(data);
+    renderTimeline(name, data);
   }
 
   function renderTodos(name, data) {
@@ -467,7 +469,182 @@
     });
   }
 
+  /* ===== 时间线 ===== */
+
+  // 各类事件在时间线上的标签文案
+  const TIMELINE_KINDS = {
+    todo: "待办",
+    todoDone: "完成",
+    note: "笔记",
+    report: "周报",
+    commit: "提交",
+    release: "发布",
+    software: "软件号"
+  };
+
+  // 把项目相关的待办、笔记、周报工时、git 提交、发布流水、软件号
+  // 按时间搓成一条轴。时间字段各源都不一样（ISO 字符串 / 秒级 epoch /
+  // 日期 / ISO 周），统一折算成毫秒再排。
+  async function renderTimeline(name, data) {
+    const box = document.getElementById("project-timeline");
+    const count = document.getElementById("project-timeline-count");
+    if (!box) return;
+    box.innerHTML = "";
+    count.textContent = "读取中…";
+
+    const events = [];
+    const push = (at, kind, title, meta, href) => {
+      const time = toTime(at);
+      if (!time) return;
+      events.push({ at: time, kind, title, meta: meta || "", href: href || "" });
+    };
+
+    data.todos.forEach((todo) => {
+      push(todo.createdAt || todo.date, "todo", "新建待办 · " + todo.title,
+        Workbench.stateLabel(todo.state) + (todo.due ? " · 截止 " + todo.due : ""),
+        "todo.html#" + todo.id);
+      if (todo.doneAt) {
+        push(todo.doneAt, "todoDone", "完成待办 · " + todo.title, "", "todo.html#" + todo.id);
+      }
+    });
+
+    data.notes.forEach((note) => {
+      push(note.updatedAt, "note", "笔记 · " + (note.title || "未命名"), "",
+        "notes.html?id=" + encodeURIComponent(note.id));
+    });
+
+    data.sections.forEach((item) => {
+      const hours = Number(item.section.hours) || 0;
+      if (!hours) return;
+      const items = (item.section.items || []).map((text) => String(text).trim()).filter(Boolean);
+      push(Workbench.weekMonday(item.report.year, item.report.week), "report",
+        `第 ${item.report.week} 周 · ${Workbench.formatHours(hours)}h`,
+        items.slice(0, 2).join("；"), "weekly.html");
+    });
+
+    // 发布流水：项目名对得上，或者仓库属于这个项目
+    const repoPaths = data.repos.map((repo) => String(repo.path || "").toLowerCase());
+    (Workbench.gitConfig().releases || []).forEach((release) => {
+      const own = release.project === name
+        || repoPaths.indexOf(String(release.repo || "").toLowerCase()) >= 0;
+      if (!own) return;
+      push(release.at, "release", "发布 · " + (release.tag || "未命名标签"),
+        release.repo ? String(release.repo) : "", "code.html");
+    });
+
+    data.software.forEach((item) => {
+      push(item.updatedAt, "software", "软件号 · " + (item.name || "未命名"),
+        item.softwareId, "code.html?tab=software&software=" + encodeURIComponent(item.id));
+    });
+
+    // git 提交：仓库逐个取最近 20 条；最多读 8 个仓库，免得打开一个项目页打一堆请求
+    const reposToRead = data.repos.slice(0, 8);
+    const logs = await Promise.all(reposToRead.map((repo) => {
+      try {
+        return GitApi.log(repo.path, { limit: 20 });
+      } catch (err) {
+        return null;
+      }
+    }));
+    logs.forEach((result, index) => {
+      if (!result || !result.ok) return;
+      const repo = reposToRead[index];
+      (result.commits || []).forEach((commit) => {
+        push(Number(commit.at) * 1000, "commit", commit.subject || "(没有提交信息)",
+          [repo.name, commit.author, shortHash(commit.hash)].filter(Boolean).join(" · "),
+          "code.html");
+      });
+    });
+
+    events.sort((a, b) => b.at - a.at);
+    count.textContent = events.length ? events.length + " 条" : "";
+    if (!events.length) {
+      box.append(empty("这个项目还没有可回溯的事件。"));
+      return;
+    }
+
+    const shown = events.slice(0, 120);
+    let currentDay = "";
+    shown.forEach((event) => {
+      const day = dayKey(event.at);
+      if (day !== currentDay) {
+        currentDay = day;
+        const head = document.createElement("div");
+        head.className = "timeline-day";
+        head.textContent = formatDay(event.at);
+        box.append(head);
+      }
+      box.append(timelineRow(event));
+    });
+    if (events.length > shown.length) {
+      const more = document.createElement("div");
+      more.className = "muted timeline-more";
+      more.textContent = `还有 ${events.length - shown.length} 条更早的记录`;
+      box.append(more);
+    }
+  }
+
+  function timelineRow(event) {
+    const row = document.createElement("div");
+    row.className = "timeline-row";
+
+    const dot = document.createElement("span");
+    dot.className = "timeline-dot is-" + event.kind;
+
+    const body = event.href ? document.createElement("a") : document.createElement("div");
+    body.className = "timeline-body";
+    if (event.href) body.href = event.href;
+
+    const head = document.createElement("div");
+    head.className = "timeline-title";
+    const tag = document.createElement("span");
+    tag.className = "timeline-tag is-" + event.kind;
+    tag.textContent = TIMELINE_KINDS[event.kind] || "";
+    const title = document.createElement("strong");
+    title.textContent = event.title;
+    head.append(tag, title);
+
+    const meta = document.createElement("span");
+    meta.className = "muted timeline-meta clamp";
+    meta.textContent = [clockText(event.at), event.meta].filter(Boolean).join(" · ");
+
+    body.append(head, meta);
+    row.append(dot, body);
+    return row;
+  }
+
   /* ===== 小工具 ===== */
+
+  // 各种时间源统一成毫秒时间戳；认不出来的返回 0（该条不显示）
+  function toTime(value) {
+    if (value instanceof Date) return value.getTime();
+    if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+    const text = String(value == null ? "" : value).trim();
+    if (!text) return 0;
+    if (/^\d{10}$/.test(text)) return Number(text) * 1000;
+    const parsed = Date.parse(text);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  function dayKey(time) {
+    const date = new Date(time);
+    return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
+  }
+
+  function formatDay(time) {
+    const date = new Date(time);
+    const week = "日一二三四五六"[date.getDay()];
+    return `${date.getFullYear()} 年 ${date.getMonth() + 1} 月 ${date.getDate()} 日 · 周${week}`;
+  }
+
+  function clockText(time) {
+    const date = new Date(time);
+    return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+  }
+
+  function shortHash(hash) {
+    return String(hash || "").slice(0, 7);
+  }
 
   function empty(text) {
     const el = document.createElement("div");

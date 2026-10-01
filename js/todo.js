@@ -50,6 +50,18 @@
       stateSelect.append(option);
     });
     document.getElementById("todo-date").value = Workbench.todayIso();
+    // 持续天数：填了就自动把截止日期算成「记录日期 + N 天」，不用手填截止日期
+    const addDate = document.getElementById("todo-date");
+    const addDue = document.getElementById("todo-due");
+    const addSpan = document.getElementById("todo-span");
+    const syncAddDue = () => {
+      const days = Number(addSpan.value);
+      if (!Number.isFinite(days) || days < 1) return;
+      const iso = addDays(addDate.value, days);
+      if (iso) addDue.value = iso;
+    };
+    addSpan.addEventListener("input", syncAddDue);
+    addDate.addEventListener("change", syncAddDue);
     const addToggle = document.getElementById("add-toggle");
     addToggle.addEventListener("click", () => {
       document.getElementById("add-fields").hidden = false;
@@ -83,6 +95,8 @@
       await Workbench.saveTodos(todos);
       document.getElementById("todo-title").value = "";
       document.getElementById("todo-due").value = "";
+      // 持续天数保留着，顺手给下一条也把截止日期填好
+      syncAddDue();
       Nav.toast("已添加");
       render();
       document.getElementById("todo-title").focus();
@@ -257,6 +271,14 @@
     return Math.round((to - from) / 86400000);
   }
 
+  // 本地日期加减天数：和 dateFromIso / todayIso 一致，都按本地时区，避免跨时区差一天
+  function addDays(iso, days) {
+    const date = Workbench.dateFromIso(iso);
+    if (!date) return "";
+    date.setDate(date.getDate() + days);
+    return Workbench.todayIso(date);
+  }
+
   function dueNode(todo) {
     if (!todo.due) return null;
     const span = document.createElement("span");
@@ -408,8 +430,26 @@
     });
     state.value = todo.state;
     const date = field("date", todo.date || "", "记录日期");
+    // 已有记录日期和截止日期时，把当前跨度反算出来显示，方便接着调
+    let spanText = "";
+    if (todo.date && todo.due) {
+      const days = diffDays(todo.date, todo.due);
+      if (days > 0) spanText = String(days);
+    }
+    const span = field("number", spanText, "持续天数");
+    span.min = "1";
+    span.step = "1";
+    span.placeholder = "天数";
     const due = field("date", todo.due || "", "截止日期");
-    grid.append(project, state, date, due);
+    const syncEditDue = () => {
+      const days = Number(span.value);
+      if (!Number.isFinite(days) || days < 1) return;
+      const iso = addDays(date.value, days);
+      if (iso) due.value = iso;
+    };
+    span.addEventListener("input", syncEditDue);
+    date.addEventListener("change", syncEditDue);
+    grid.append(project, state, date, span, due);
     const remark = document.createElement("textarea");
     remark.rows = 3;
     remark.placeholder = "备注";

@@ -13,7 +13,9 @@
   const INDEX_VERSION = 1;
   const CAS_RETRY = 3;
 
-  const JSON_UNITS = ["todos.json", "reports.json", "notes.json", "recipes.json", "software.json", "vault.json", "deepseek.json"];
+  // files.json 不在这里：它指向 files/ 里的二进制本体，那些不上云，
+  // 同步过去只会得到一堆打不开的卡片。
+  const JSON_UNITS = ["todos.json", "reports.json", "notes.json", "recipes.json", "ledger.json", "software.json", "vault.json", "deepseek.json"];
   const META_UNIT = "meta.json";          // 只同步项目清单，本机路径（工具、git 根目录）不外传
 
   let state = null;
@@ -349,6 +351,13 @@
 
       state.lastSyncAt = new Date().toISOString();
       if (!saved) {
+        if (state) {
+          state.lastError = {
+            at: state.lastSyncAt,
+            message: "清单写入被其它设备抢先，改动已上传，下次同步会自动合并",
+            kind: "conflict"
+          };
+        }
         setStatus({
           state: "error",
           message: "清单写入被其它设备抢先，改动已上传，下次同步会自动合并",
@@ -367,8 +376,11 @@
       if (conflicts) emit();
       return { ok: saved, pulled, pushed: uploads.length, conflicts };
     } catch (err) {
-      setStatus({ state: "error", message: (err && err.message) || "同步失败" });
-      return { ok: false, message: (err && err.message) || "同步失败" };
+      const message = (err && err.message) || "同步失败";
+      // 留一份最近一次失败，健康度面板据此归类（网络 / 凭证 / 权限）
+      if (state) state.lastError = { at: new Date().toISOString(), message, kind: classifyError(message) };
+      setStatus({ state: "error", message });
+      return { ok: false, message };
     } finally {
       running = false;
       refreshPending();
@@ -438,6 +450,69 @@
   function setRemote(impl) {
     remote = impl;
     emit();
+  }
+
+  /* ===== 健康度 ===== */
+
+  // 同步报错只有一句 message，这里按文案归成几类，方便一眼看出该去查什么
+  function classifyError(message) {
+    const text = String(message || "");
+    if (!text) return "";
+    if (/抢先/.test(text)) return "conflict";
+    if (/匿名登录|anonymous|signIn|登录|密码|凭证|token|401|403/i.test(text)) return "credential";
+    if (/环境 ID|环境|env|权限|authorized|存储返回异常/i.test(text)) return "permission";
+    if (/网络|network|fetch|timeout|超时|连不上|offline|加载云 SDK/i.test(text)) return "network";
+    return "unknown";
+  }
+
+  // 给「云同步」面板用：上次成功时间 / 冲突副本 / 版本差 / 最近一次失败归类。
+  // 会去读一次云端清单（只读，不改），读不到也不算错，如实报出来即可。
+  async function health() {
+    await loadState();
+    const times = state.conflicts.map((item) => item.at).filter(Boolean).sort();
+    const report = {
+      state: status.state,
+      message: status.message,
+      lastSyncAt: state.lastSyncAt || status.lastSyncAt || "",
+      pending: status.pending,
+      conflictCount: state.conflicts.length,
+      oldestConflictAt: times[0] || "",
+      newestConflictAt: times[times.length - 1] || "",
+      remoteUpdatedAt: "",
+      behind: 0,        // 云端 rev 比本机基准高的单元数
+      behindMax: 0,     // 其中最大的版本号差
+      remoteReachable: false,
+      remoteMessage: "",
+      lastError: state.lastError || null
+    };
+
+    if (!remote) {
+      report.remoteMessage = "还没有配置云同步";
+      return report;
+    }
+    if (!root.SyncCrypto.isUnlocked()) {
+      report.remoteMessage = "同步尚未解锁";
+      return report;
+    }
+    try {
+      const got = await remote.getIndex();
+      const index = got.text ? await root.SyncCrypto.open(got.text) : emptyIndex();
+      const files = (index && index.files) || {};
+      report.remoteUpdatedAt = (index && index.updatedAt) || "";
+      report.remoteReachable = true;
+      Object.keys(files).forEach((path) => {
+        const cloudRev = Number(files[path].rev) || 0;
+        const baseRev = state.base[path] ? Number(state.base[path].rev) || 0 : 0;
+        const gap = cloudRev - baseRev;
+        if (gap > 0) {
+          report.behind += 1;
+          if (gap > report.behindMax) report.behindMax = gap;
+        }
+      });
+    } catch (err) {
+      report.remoteMessage = (err && err.message) || "读不到云端清单";
+    }
+    return report;
   }
 
   /* ===== 对外 ===== */
@@ -543,6 +618,8 @@
     conflicts: getConflicts,
     restoreConflict,
     removeConflict,
+    health,
+    classifyError,
     reset,
     isUnit,
     STATE_FILE,

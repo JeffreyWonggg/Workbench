@@ -1,7 +1,7 @@
 (function () {
   Nav.boot("home", async () => {
     bindCapture();
-    bindTools();
+    setupCards();
     await render();
     // 余额卡片自己取数、自己渲染，失败也不影响首页其它部分
     DeepSeekCard.init().catch((err) => {
@@ -56,164 +56,6 @@
     input.focus();
   }
 
-  /* ===== 工具菜单：清单来自 meta.json，服务端只负责按路径启动 ===== */
-
-  function bindTools() {
-    const menu = document.getElementById("tool-menu");
-    document.getElementById("tool-menu-toggle").addEventListener("click", (event) => {
-      event.stopPropagation();
-      setMenuOpen(menu.hidden);
-    });
-    document.addEventListener("click", (event) => {
-      if (!menu.hidden && !event.target.closest(".tool-wrap")) setMenuOpen(false);
-    });
-    document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape" && !menu.hidden) setMenuOpen(false);
-    });
-    document.getElementById("tool-add").addEventListener("click", () => addToolRow({}));
-    document.getElementById("tool-cancel").addEventListener("click", closeToolDialog);
-    document.getElementById("tool-form").addEventListener("submit", saveTools);
-    renderToolMenu();
-  }
-
-  function setMenuOpen(open) {
-    document.getElementById("tool-menu").hidden = !open;
-    document.getElementById("tool-menu-toggle").setAttribute("aria-expanded", open ? "true" : "false");
-    if (open) renderToolMenu();
-  }
-
-  function renderToolMenu() {
-    const menu = document.getElementById("tool-menu");
-    // 没有本机服务时（手机、托管地址）「启动外部程序」根本跑不了，整个入口收起来
-    if (typeof Nav.isLocal === "function" && !Nav.isLocal()) {
-      const toggle = document.getElementById("tool-menu-toggle");
-      if (toggle) toggle.hidden = true;
-      menu.hidden = true;
-      return;
-    }
-    menu.innerHTML = "";
-    const tools = Workbench.meta.tools || [];
-    if (tools.length === 0) {
-      const hint = document.createElement("div");
-      hint.className = "palette-empty";
-      hint.textContent = "还没有配置工具。";
-      menu.append(hint);
-    }
-    tools.forEach((tool) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.textContent = tool.label;
-      button.title = tool.exe;
-      button.addEventListener("click", () => {
-        setMenuOpen(false);
-        runTool(tool);
-      });
-      menu.append(button);
-    });
-    const sep = document.createElement("div");
-    sep.className = "tool-menu-sep";
-    menu.append(sep);
-    const manage = document.createElement("button");
-    manage.type = "button";
-    manage.textContent = "管理工具…";
-    manage.addEventListener("click", () => {
-      setMenuOpen(false);
-      openToolDialog();
-    });
-    menu.append(manage);
-  }
-
-  async function runTool(tool) {
-    const toggle = document.getElementById("tool-menu-toggle");
-    toggle.disabled = true;
-    try {
-      const response = await fetch("http://127.0.0.1:47321/run-tool", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ exe: tool.exe, args: tool.args || "", cwd: tool.cwd || "" })
-      });
-      if (response.status === 400) {
-        const reason = await response.text();
-        Nav.toast(`没有启动：${reason}`);
-        return;
-      }
-      if (!response.ok) throw new Error("run failed");
-      Nav.toast(`已启动 ${tool.label}`);
-    } catch (err) {
-      Nav.toast("没有启动。请先双击「打开工作台」再试");
-    } finally {
-      toggle.disabled = false;
-    }
-  }
-
-  function openToolDialog() {
-    const rows = document.getElementById("tool-rows");
-    rows.innerHTML = "";
-    (Workbench.meta.tools || []).forEach((tool) => addToolRow(tool));
-    if (!rows.children.length) addToolRow({});
-    setToolError("");
-    document.getElementById("tool-dialog").showModal();
-  }
-
-  function closeToolDialog() {
-    const dialog = document.getElementById("tool-dialog");
-    if (dialog.open) dialog.close();
-  }
-
-  function setToolError(message) {
-    const el = document.getElementById("tool-error");
-    el.textContent = message || "";
-    el.hidden = !message;
-  }
-
-  function addToolRow(tool) {
-    const row = document.createElement("div");
-    row.className = "tool-row";
-    row.dataset.args = tool.args || "";
-    row.dataset.cwd = tool.cwd || "";
-
-    const label = document.createElement("input");
-    label.type = "text";
-    label.dataset.field = "label";
-    label.placeholder = "按钮名称";
-    label.value = tool.label || "";
-
-    const exe = document.createElement("input");
-    exe.type = "text";
-    exe.dataset.field = "exe";
-    exe.placeholder = "C:\\路径\\程序.exe";
-    exe.value = tool.exe || "";
-
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = "btn danger";
-    remove.textContent = "移除";
-    remove.addEventListener("click", () => row.remove());
-
-    row.append(label, exe, remove);
-    document.getElementById("tool-rows").append(row);
-  }
-
-  async function saveTools(event) {
-    event.preventDefault();
-    const rows = Array.prototype.slice.call(document.querySelectorAll("#tool-rows .tool-row"));
-    const tools = rows.map((row) => ({
-      label: row.querySelector('[data-field="label"]').value.trim(),
-      exe: row.querySelector('[data-field="exe"]').value.trim(),
-      args: row.dataset.args || "",
-      cwd: row.dataset.cwd || ""
-    })).filter((tool) => tool.exe);
-    Workbench.meta.tools = Workbench.normalizeTools(tools);
-    try {
-      await Workbench.saveMeta();
-      closeToolDialog();
-      renderToolMenu();
-      Nav.toast("工具已保存");
-    } catch (err) {
-      setToolError(err && err.message ? err.message : "保存失败");
-    }
-  }
-
   function collapseCapture() {
     const fields = document.getElementById("capture-fields");
     const toggle = document.getElementById("capture-toggle");
@@ -222,6 +64,275 @@
     toggle.hidden = false;
     toggle.setAttribute("aria-expanded", "false");
     toggle.focus();
+  }
+
+  /* ===== 首页卡片布局：拖动排序 + 收起不看的 =====
+     顺序和收起状态存在 localStorage（跟着浏览器走，和侧栏排序一个道理）。 */
+
+  const LAYOUT_KEY = "wb-home-cards";
+  const CARD_KEYS = ["usage", "focus", "doing", "week", "notes", "git", "ledger"];
+
+  let layout = readLayout();
+  let editing = false;
+  let dragCard = null;
+
+  function readLayout() {
+    let saved = null;
+    try {
+      saved = JSON.parse(localStorage.getItem(LAYOUT_KEY) || "null");
+    } catch (err) {
+      saved = null;
+    }
+    const order = (saved && Array.isArray(saved.order) ? saved.order : [])
+      .filter((key) => CARD_KEYS.indexOf(key) >= 0);
+    CARD_KEYS.forEach((key) => {
+      if (order.indexOf(key) < 0) order.push(key);
+    });
+    const hidden = (saved && Array.isArray(saved.hidden) ? saved.hidden : [])
+      .filter((key) => CARD_KEYS.indexOf(key) >= 0);
+    return { order, hidden };
+  }
+
+  function writeLayout() {
+    try {
+      localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout));
+    } catch (err) {
+      // 存不下就算了，下次打开回到默认顺序
+    }
+  }
+
+  function allCards() {
+    return Array.prototype.slice.call(document.querySelectorAll("#home-cards .home-card"));
+  }
+
+  function cardOf(key) {
+    return document.querySelector('#home-cards .home-card[data-card="' + key + '"]');
+  }
+
+  function applyLayout() {
+    const box = document.getElementById("home-cards");
+    layout.order.forEach((key) => {
+      const card = cardOf(key);
+      if (card) box.append(card);
+    });
+    allCards().forEach((card) => {
+      card.classList.toggle("is-collapsed", layout.hidden.indexOf(card.dataset.card) >= 0);
+    });
+  }
+
+  function setupCards() {
+    allCards().forEach((card) => {
+      const head = card.querySelector(".card-head");
+      if (!head || head.querySelector(".card-tools")) return;
+      const key = card.dataset.card;
+
+      const tools = document.createElement("div");
+      tools.className = "card-tools";
+
+      const grip = document.createElement("span");
+      grip.className = "card-grip";
+      grip.title = "拖动排序";
+      grip.setAttribute("aria-hidden", "true");
+      grip.append(Nav.icon("grip"));
+
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "linkish card-collapse";
+      toggle.addEventListener("click", () => toggleCard(key));
+
+      tools.append(grip, toggle);
+      head.append(tools);
+      paintToggle(card);
+
+      card.addEventListener("dragstart", (event) => {
+        if (!editing) {
+          event.preventDefault();
+          return;
+        }
+        dragCard = card;
+        card.classList.add("dragging");
+        event.dataTransfer.effectAllowed = "move";
+        try {
+          event.dataTransfer.setData("text/plain", key);
+        } catch (err) {
+          // 某些浏览器对 setData 有额外限制，拖拽本身不依赖它
+        }
+      });
+      card.addEventListener("dragend", () => {
+        card.classList.remove("dragging");
+        dragCard = null;
+        // 拖完就以真实 DOM 顺序为准，别再自己算一遍
+        layout.order = allCards().map((item) => item.dataset.card);
+        writeLayout();
+      });
+    });
+
+    const box = document.getElementById("home-cards");
+    box.addEventListener("dragover", onDragOver);
+    box.addEventListener("drop", (event) => event.preventDefault());
+    document.getElementById("home-layout").addEventListener("click", () => setEditing(!editing));
+    applyLayout();
+  }
+
+  // 边拖边排：指针压到哪张卡的哪半边，就直接把被拖的卡插过去
+  function onDragOver(event) {
+    if (!editing || !dragCard) return;
+    event.preventDefault();
+    const cards = allCards().filter((card) => card !== dragCard);
+    let index = cards.length;
+    for (let i = 0; i < cards.length; i += 1) {
+      const rect = cards[i].getBoundingClientRect();
+      const inRow = event.clientY >= rect.top && event.clientY <= rect.bottom;
+      if (inRow && event.clientX < rect.left + rect.width / 2) {
+        index = i;
+        break;
+      }
+      if (!inRow && event.clientY < rect.top + rect.height / 2) {
+        index = i;
+        break;
+      }
+    }
+    const box = document.getElementById("home-cards");
+    if (index >= cards.length) {
+      if (box.lastElementChild !== dragCard) box.append(dragCard);
+      return;
+    }
+    if (cards[index].previousElementSibling !== dragCard) box.insertBefore(dragCard, cards[index]);
+  }
+
+  function setEditing(value) {
+    editing = value;
+    document.getElementById("home-cards").classList.toggle("is-editing", editing);
+    const button = document.getElementById("home-layout");
+    button.textContent = editing ? "完成" : "布局";
+    button.setAttribute("aria-pressed", editing ? "true" : "false");
+    allCards().forEach((card) => {
+      card.draggable = editing;
+      paintToggle(card);
+    });
+    if (editing) Nav.toast("拖动卡片调整顺序，点「收起」把不常用的收起来");
+  }
+
+  function toggleCard(key) {
+    const at = layout.hidden.indexOf(key);
+    if (at >= 0) layout.hidden.splice(at, 1);
+    else layout.hidden.push(key);
+    writeLayout();
+    const card = cardOf(key);
+    if (card) card.classList.toggle("is-collapsed", at < 0);
+    paintToggle(card);
+  }
+
+  function paintToggle(card) {
+    if (!card) return;
+    const button = card.querySelector(".card-collapse");
+    if (!button) return;
+    const collapsed = layout.hidden.indexOf(card.dataset.card) >= 0;
+    button.textContent = collapsed ? "显示" : "收起";
+    button.setAttribute("aria-label", (collapsed ? "显示" : "收起") + "这张卡片");
+  }
+
+  /* ===== 代码仓库卡片 ===== */
+
+  async function renderGit() {
+    const box = document.getElementById("git-box");
+    const card = cardOf("git");
+    if (!box || !card) return;
+    box.innerHTML = "";
+    const repos = Workbench.gitConfig().repos || [];
+    if (!repos.length || typeof GitApi === "undefined") {
+      card.hidden = true;
+      return;
+    }
+    const result = await GitApi.status(repos.slice(0, 6).map((repo) => repo.path), {});
+    if (!result || !result.ok) {
+      card.hidden = true;
+      return;
+    }
+    const names = {};
+    repos.forEach((repo) => {
+      names[String(repo.path).toLowerCase()] = repo.name;
+    });
+    const items = (result.repos || []).filter((item) => !item.error);
+    if (!items.length) {
+      card.hidden = true;
+      return;
+    }
+    card.hidden = false;
+    const dirty = items.filter((item) => (item.staged || 0) + (item.unstaged || 0) > 0);
+    if (!dirty.length) {
+      box.append(empty("所有仓库都是干净的。"));
+      return;
+    }
+    dirty.slice(0, 6).forEach((item) => {
+      const row = document.createElement("a");
+      row.className = "stack-item";
+      row.href = "code.html";
+      const title = document.createElement("strong");
+      title.textContent = names[String(item.path).toLowerCase()] || item.path;
+      const meta = document.createElement("span");
+      meta.className = "muted";
+      meta.textContent = [item.branch || "无分支", `${(item.staged || 0) + (item.unstaged || 0)} 处未提交`].join(" · ");
+      row.append(title, meta);
+      box.append(row);
+    });
+    if (dirty.length > 6) {
+      const more = document.createElement("a");
+      more.className = "stack-item";
+      more.href = "code.html";
+      more.textContent = `还有 ${dirty.length - 6} 个仓库有未提交改动`;
+      box.append(more);
+    }
+  }
+
+  /* ===== 本月记账卡片 ===== */
+
+  async function renderLedger() {
+    const box = document.getElementById("ledger-box");
+    const card = cardOf("ledger");
+    if (!box || !card) return;
+    box.innerHTML = "";
+    const items = Workbench.activeItems(await Workbench.loadLedgers());
+    if (!items.length) {
+      card.hidden = true;
+      return;
+    }
+    card.hidden = false;
+    const month = Workbench.todayIso().slice(0, 7);
+    const monthItems = items.filter((item) => String(item.date).slice(0, 7) === month);
+    const expense = sumAmount(monthItems.filter((item) => item.kind === "expense"));
+    const income = sumAmount(monthItems.filter((item) => item.kind === "income"));
+
+    const total = document.createElement("div");
+    total.className = "total-hours";
+    total.append(document.createTextNode((income - expense).toFixed(2)));
+    const unit = document.createElement("span");
+    unit.textContent = "本月结余";
+    total.append(unit);
+    box.append(total);
+
+    if (!monthItems.length) {
+      box.append(empty("这个月还没有记账。"));
+      return;
+    }
+    box.append(line("支出", expense.toFixed(2)));
+    box.append(line("收入", income.toFixed(2)));
+  }
+
+  function sumAmount(items) {
+    return items.reduce((total, item) => total + (Number(item.amount) || 0), 0);
+  }
+
+  function line(left, right) {
+    const row = document.createElement("div");
+    row.className = "hours-line";
+    const name = document.createElement("span");
+    name.textContent = left;
+    const value = document.createElement("span");
+    value.className = "muted";
+    value.textContent = right;
+    row.append(name, value);
+    return row;
   }
 
   async function render() {
@@ -305,7 +416,7 @@
     }
 
     const notes = Workbench.activeItems(await Workbench.loadNoteIndex());
-    const recent = notes.slice(0, 5);
+    const recent = notes.slice(0, 3);
     const noteBox = document.getElementById("note-box");
     noteBox.innerHTML = "";
     if (recent.length === 0) {
@@ -324,6 +435,9 @@
         noteBox.append(link);
       });
     }
+
+    await renderGit();
+    await renderLedger();
   }
 
   function doingItem(todo) {

@@ -7,6 +7,7 @@
   <meta name="color-scheme" content="dark light">
   <link rel="preload" href="fonts/inter-latin-400.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="fonts/jetbrains-mono-latin-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="css/app.css">
   <script>try{document.documentElement.dataset.theme=localStorage.getItem("wb-theme")||"light"}catch(e){document.documentElement.dataset.theme="light"}</script>
 </head>
@@ -21,7 +22,9 @@
             <p class="kicker">笔记</p>
             <h1>笔记</h1>
           </div>
-          <button type="button" id="new-note" class="btn primary">新建</button>
+          <div class="row-actions">
+            <button type="button" id="new-note" class="btn primary">新建</button>
+          </div>
         </header>
         <div class="notes-layout">
           <div class="card notes-list-card">
@@ -73,6 +76,23 @@
   <script src="js/sync-core.js"></script>
   <script src="js/sync-cloudbase.js"></script>
   <script src="js/sync-ui.js"></script>
+  <script src="js/vendor/highlight.min.js"></script>
+  <script src="js/vendor/langs/c.min.js"></script>
+  <script src="js/vendor/langs/cpp.min.js"></script>
+  <script src="js/vendor/langs/csharp.min.js"></script>
+  <script src="js/vendor/langs/python.min.js"></script>
+  <script src="js/vendor/langs/java.min.js"></script>
+  <script src="js/vendor/langs/javascript.min.js"></script>
+  <script src="js/vendor/langs/typescript.min.js"></script>
+  <script src="js/vendor/langs/json.min.js"></script>
+  <script src="js/vendor/langs/bash.min.js"></script>
+  <script src="js/vendor/langs/sql.min.js"></script>
+  <script src="js/vendor/langs/yaml.min.js"></script>
+  <script src="js/vendor/langs/css.min.js"></script>
+  <script src="js/vendor/langs/xml.min.js"></script>
+  <script src="js/vendor/langs/go.min.js"></script>
+  <script src="js/vendor/langs/rust.min.js"></script>
+  <script src="js/vendor/langs/markdown.min.js"></script>
   <script src="js/notes.js"></script>
 </body>
 </html>

@@ -7,6 +7,7 @@
   <meta name="color-scheme" content="dark light">
   <link rel="preload" href="fonts/inter-latin-400.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="fonts/jetbrains-mono-latin-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="css/app.css">
   <script>try{document.documentElement.dataset.theme=localStorage.getItem("wb-theme")||"light"}catch(e){document.documentElement.dataset.theme="light"}</script>
 </head>
@@ -40,6 +41,7 @@
             <select id="todo-project" aria-label="项目"></select>
             <select id="todo-state" aria-label="状态"></select>
             <input id="todo-date" type="date" aria-label="记录日期" title="记录日期">
+            <input id="todo-span" type="number" min="1" step="1" placeholder="天数" aria-label="持续天数" title="持续天数：填了自动按「记录日期 + N 天」填好截止日期">
             <input id="todo-due" type="date" aria-label="截止日期" title="截止日期">
             <button class="btn primary" type="submit">添加</button>
           </div>

@@ -164,6 +164,14 @@
     return wrap;
   }
 
+  function updateActive() {
+    const list = document.getElementById("note-list");
+    if (!list) return;
+    list.querySelectorAll(".note-row").forEach((row) => {
+      row.classList.toggle("on", row.dataset.id === currentId);
+    });
+  }
+
   function renderList() {
     const q = queryText();
     renderLimit = PAGE;
@@ -201,10 +209,12 @@
 
   function paintRows(q) {
     const list = document.getElementById("note-list");
+    const prevScroll = list.scrollTop;
     list.innerHTML = "";
     setCount();
     if (!matched.length) {
       list.append(emptyRow(q ? "没有匹配的笔记。" : "没有笔记。"));
+      list.scrollTop = prevScroll;
       return;
     }
     const shown = q ? matched.slice(0, renderLimit) : matched;
@@ -231,6 +241,7 @@
     if (q && matched.length > shown.length) {
       list.append(moreButton(matched.length - shown.length));
     }
+    list.scrollTop = prevScroll;
   }
 
   function moreButton(rest) {
@@ -263,6 +274,7 @@
     const button = document.createElement("button");
     button.type = "button";
     button.className = "note-row" + (note.id === currentId ? " on" : "");
+    button.dataset.id = note.id;
     const titleText = note.title || "未命名";
     const title = document.createElement("strong");
     title.textContent = titleText;
@@ -281,7 +293,7 @@
   }
 
   async function openNote(id) {
-    await flush();
+    await saveCurrent();
     const note = notes.find((item) => item.id === id);
     if (!note) return;
     currentId = id;
@@ -293,7 +305,7 @@
     loadSource(await Workbench.readNoteBody(id));
     document.getElementById("save-state").textContent = "已保存";
     dirty = false;
-    renderList();
+    updateActive();
   }
 
   function loadSource(text) {
@@ -768,7 +780,10 @@
       syncSource();
       markDirty();
       autosize(area);
+      maybeShowLangDropdown(area, index);
     });
+    area.addEventListener("scroll", hideLangDropdown);
+    area.addEventListener("blur", hideLangDropdown);
     area.addEventListener("keydown", onAreaKeydown);
     area.addEventListener("paste", onAreaPaste);
     requestAnimationFrame(() => autosize(area));
@@ -790,6 +805,11 @@
 
   function onAreaKeydown(event) {
     if (event.isComposing) return;
+    if (event.key === "Escape" && langDropdownOpen) {
+      hideLangDropdown();
+      event.preventDefault();
+      return;
+    }
     const area = event.currentTarget;
     const index = Number(area.dataset.index);
     if (selectedTable >= 0) {
@@ -801,6 +821,16 @@
       clearTableSelection();
     }
     if (event.key === "Enter" && !event.shiftKey) {
+      if (langDropdownOpen) hideLangDropdown();
+      // 普通文本块里以 ``` 起头的那一行回车：自动补出结尾的 ``` 围栏，光标落在中间空行
+      if (blocks[index].type !== "code") {
+        const fence = fenceOnLine(area);
+        if (fence) {
+          event.preventDefault();
+          insertFence(area, index, fence);
+          return;
+        }
+      }
       event.preventDefault();
       splitLine(area);
       return;
@@ -823,6 +853,182 @@
         focusAtLine(next, "start");
       }
     }
+  }
+
+  function fenceOnLine(area) {
+    const pos = area.selectionStart;
+    const value = area.value;
+    const lineStart = value.lastIndexOf("\n", pos - 1) + 1;
+    let lineEnd = value.indexOf("\n", pos);
+    if (lineEnd === -1) lineEnd = value.length;
+    const line = value.slice(lineStart, lineEnd);
+    const m = /^\s*(`{3,})([^\n\x60]*)\s*$/.exec(line);
+    return m ? m[1] : null;
+  }
+
+  function insertFence(area, index, fence) {
+    saveUndoPoint();
+    const caret = area.selectionStart;
+    const value = area.value;
+    const left = value.slice(0, caret);
+    const right = value.slice(caret);
+    const inserted = "\n\n" + fence + "\n";
+    blocks[index].text = left + inserted + right;
+    const caretLine = blockLineStart(index) + (left.match(/\n/g) || []).length + 1;
+    const located = reparseLocate(caretLine, 0);
+    showLocated(located, "start");
+    markDirty();
+  }
+
+  const LANGUAGES = [
+    { label: "纯文本", value: "" },
+    { label: "C", value: "c" },
+    { label: "C++", value: "cpp" },
+    { label: "C#", value: "csharp" },
+    { label: "Python", value: "python" },
+    { label: "JavaScript", value: "javascript" },
+    { label: "TypeScript", value: "typescript" },
+    { label: "Java", value: "java" },
+    { label: "Go", value: "go" },
+    { label: "Rust", value: "rust" },
+    { label: "SQL", value: "sql" },
+    { label: "Bash / Shell", value: "bash" },
+    { label: "JSON", value: "json" },
+    { label: "YAML", value: "yaml" },
+    { label: "XML / HTML", value: "xml" },
+    { label: "CSS", value: "css" },
+    { label: "Markdown", value: "markdown" },
+    { label: "Kotlin", value: "kotlin" },
+    { label: "Swift", value: "swift" },
+    { label: "PHP", value: "php" },
+    { label: "Ruby", value: "ruby" },
+    { label: "Dart", value: "dart" },
+    { label: "Lua", value: "lua" },
+    { label: "Scala", value: "scala" }
+  ];
+
+  let langDropdown = null;
+  let langCtx = null;
+  let langDropdownOpen = false;
+
+  // 点下拉外部时关闭（捕获阶段，避免和列表项点击冲突）
+  document.addEventListener("mousedown", (event) => {
+    if (langDropdownOpen && langDropdown && !langDropdown.contains(event.target)) hideLangDropdown();
+  }, true);
+
+  function ensureLangDropdown() {
+    if (langDropdown) return langDropdown;
+    langDropdown = document.createElement("div");
+    langDropdown.id = "lang-dropdown";
+    langDropdown.className = "lang-dropdown";
+    langDropdown.hidden = true;
+    const ul = document.createElement("ul");
+    LANGUAGES.forEach((lang) => {
+      const li = document.createElement("li");
+      li.dataset.value = lang.value;
+      const name = document.createElement("span");
+      name.className = "lang-name";
+      name.textContent = lang.label;
+      li.append(name);
+      if (lang.value) {
+        const sub = document.createElement("span");
+        sub.className = "lang-sub";
+        sub.textContent = lang.value;
+        li.append(sub);
+      }
+      ul.append(li);
+    });
+    langDropdown.append(ul);
+    // 在浮层内按下不抢走 textarea 焦点，保证点击能落到 li 上
+    langDropdown.addEventListener("mousedown", (event) => event.preventDefault());
+    langDropdown.addEventListener("click", (event) => {
+      const li = event.target.closest("li");
+      if (!li || !langCtx) return;
+      applyLang(li.dataset.value);
+    });
+    document.body.append(langDropdown);
+    return langDropdown;
+  }
+
+  function hideLangDropdown() {
+    if (langDropdown) langDropdown.hidden = true;
+    langDropdownOpen = false;
+    langCtx = null;
+  }
+
+  // 估算 textarea 中光标坐标（镜像 div）：用于把语言下拉定位到 ``` 行下方
+  function getCaretCoordinates(el, position) {
+    const div = document.createElement("div");
+    const style = div.style;
+    const computed = getComputedStyle(el);
+    const props = ["boxSizing", "width", "height", "overflowX", "overflowY",
+      "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth",
+      "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
+      "fontStyle", "fontVariant", "fontWeight", "fontStretch", "fontSize", "lineHeight",
+      "fontFamily", "textAlign", "textTransform", "textIndent", "letterSpacing", "wordSpacing", "tabSize"];
+    props.forEach((p) => { style[p] = computed[p]; });
+    style.position = "absolute";
+    style.visibility = "hidden";
+    style.whiteSpace = "pre-wrap";
+    style.wordWrap = "break-word";
+    style.top = "0";
+    style.left = "0";
+    div.textContent = el.value.substring(0, position);
+    const span = document.createElement("span");
+    span.textContent = el.value.substring(position) || ".";
+    div.appendChild(span);
+    document.body.appendChild(div);
+    const coordinates = {
+      top: span.offsetTop,
+      left: span.offsetLeft,
+      height: parseInt(computed.lineHeight, 10) || (parseInt(computed.fontSize, 10) * 1.4)
+    };
+    document.body.removeChild(div);
+    return coordinates;
+  }
+
+  // 当前行是「``` 起头且还没填语言」的围栏起始行时，弹出语言下拉
+  function maybeShowLangDropdown(area, index) {
+    if (blocks[index].type === "code") { hideLangDropdown(); return; }
+    const pos = area.selectionStart;
+    const value = area.value;
+    const lineStart = value.lastIndexOf("\n", pos - 1) + 1;
+    let lineEnd = value.indexOf("\n", pos);
+    if (lineEnd === -1) lineEnd = value.length;
+    const line = value.slice(lineStart, lineEnd);
+    const m = /^(\s*)(`{3,})\s*([^\n\x60]*)$/.exec(line);
+    if (!m || m[3] !== "") { hideLangDropdown(); return; }
+    showLangDropdown(area, index, m[1], m[2]);
+  }
+
+  function showLangDropdown(area, index, indent, fence) {
+    const drop = ensureLangDropdown();
+    langCtx = { area, index, indent, fence };
+    const c = getCaretCoordinates(area, area.selectionStart);
+    const rect = area.getBoundingClientRect();
+    drop.style.position = "fixed";
+    drop.style.left = (rect.left + c.left - area.scrollLeft) + "px";
+    drop.style.top = (rect.top + c.top - area.scrollTop + c.height + 2) + "px";
+    drop.hidden = false;
+    langDropdownOpen = true;
+  }
+
+  // 选中语言：写回 ``` 后的语言名，并补出闭合围栏，光标落在中间空行
+  function applyLang(lang) {
+    if (!langCtx) return;
+    const { area, index, indent, fence } = langCtx;
+    const pos = area.selectionStart;
+    const value = area.value;
+    const lineStart = value.lastIndexOf("\n", pos - 1) + 1;
+    let lineEnd = value.indexOf("\n", pos);
+    if (lineEnd === -1) lineEnd = value.length;
+    const newLine = indent + fence + (lang ? " " + lang : "");
+    const newValue = value.slice(0, lineStart) + newLine + value.slice(lineEnd);
+    area.value = newValue;
+    const newCaret = lineStart + newLine.length;
+    area.setSelectionRange(newCaret, newCaret);
+    hideLangDropdown();
+    insertFence(area, index, fence);
   }
 
   function splitLine(area) {
@@ -1172,12 +1378,14 @@
     saveTimer = setTimeout(flush, 500);
   }
 
-  async function flush() {
+  // 只保存当前笔记，不重建列表。切换笔记时走这里，避免列表滚动位置归零、以及
+  // 因 updatedAt 重排序把上一条顶到最上面造成的视觉跳动。
+  async function saveCurrent() {
     clearTimeout(saveTimer);
-    if (!dirty || !currentId) return;
+    if (!dirty || !currentId) return false;
     syncSource();
     const existing = notes.find((item) => item.id === currentId);
-    if (!existing) return;
+    if (!existing) return false;
     dirty = false;
     const title = document.getElementById("note-title").value.trim() || "未命名";
     const body = document.getElementById("note-body").value;
@@ -1199,9 +1407,14 @@
     }
     Object.assign(existing, next);
     bodyCache.set(currentId, String(body || "").toLowerCase());
-    if (!dirty) document.getElementById("save-state").textContent = "已保存";
+    document.getElementById("save-state").textContent = "已保存";
     notes.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
-    renderList();
+    return true;
+  }
+
+  async function flush() {
+    const saved = await saveCurrent();
+    if (saved) renderList();
   }
 
   async function createNote() {
@@ -1216,6 +1429,8 @@
     notes.unshift(note);
     bodyCache.set(note.id, "");
     await openNote(note.id);
+    const listEl = document.getElementById("note-list");
+    if (listEl) listEl.scrollTop = 0;
     document.getElementById("note-title").focus();
     document.getElementById("note-title").select();
   }

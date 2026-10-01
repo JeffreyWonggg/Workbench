@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>记账</title>
+  <meta name="color-scheme" content="dark light">
+  <link rel="preload" href="fonts/inter-latin-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/jetbrains-mono-latin-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/app.css">
+  <script>try{document.documentElement.dataset.theme=localStorage.getItem("wb-theme")||"light"}catch(e){document.documentElement.dataset.theme="light"}</script>
+</head>
+<body>
+  <div id="shell">
+    <aside id="sidebar"></aside>
+    <main id="main">
+      <div id="gate" hidden></div>
+      <div id="content" hidden>
+        <header class="page-head">
+          <div>
+            <p class="kicker">记账</p>
+            <h1 id="ledger-title">本月</h1>
+            <p class="sub" id="ledger-summary"></p>
+          </div>
+          <div class="row-actions">
+            <button type="button" id="ledger-add" class="btn primary">记一笔</button>
+          </div>
+        </header>
+
+        <div class="ledger-stats">
+          <div class="card ledger-stat">
+            <span class="ledger-stat-label">支出</span>
+            <b class="ledger-stat-value is-expense" id="stat-expense">0.00</b>
+            <span class="ledger-stat-sub muted" id="stat-expense-sub"></span>
+          </div>
+          <div class="card ledger-stat">
+            <span class="ledger-stat-label">收入</span>
+            <b class="ledger-stat-value is-income" id="stat-income">0.00</b>
+            <span class="ledger-stat-sub muted" id="stat-income-sub"></span>
+          </div>
+          <div class="card ledger-stat">
+            <span class="ledger-stat-label">结余</span>
+            <b class="ledger-stat-value" id="stat-balance">0.00</b>
+            <span class="ledger-stat-sub muted" id="stat-balance-sub"></span>
+          </div>
+        </div>
+
+        <div class="filters">
+          <div class="ledger-filter-row">
+            <div class="seg" role="group" aria-label="切换月份">
+              <button type="button" id="prev-month" class="seg-btn">上一月</button>
+              <button type="button" id="this-month" class="seg-btn">本月</button>
+              <button type="button" id="next-month" class="seg-btn">下一月</button>
+            </div>
+            <div class="ledger-search">
+              <svg class="ico" aria-hidden="true"><use href="#i-search"></use></svg>
+              <input id="ledger-search" type="search" placeholder="搜索分类或备注…" aria-label="搜索记录" autocomplete="off">
+            </div>
+          </div>
+          <div id="ledger-kinds" class="chips"></div>
+        </div>
+
+        <div id="ledger-list" class="ledger-list"></div>
+      </div>
+    </main>
+  </div>
+
+  <dialog id="ledger-dialog" class="code-dialog ledger-dialog">
+    <form id="ledger-form">
+      <h2 id="ledger-dialog-title">记一笔</h2>
+      <p class="sub">金额填正数就行，是收是支由上面的「支出 / 收入」决定。备注可以留空。</p>
+      <div class="form-grid">
+        <label class="wide">
+          <span>类型</span>
+          <div class="seg" id="ledger-kind" role="group" aria-label="类型">
+            <button type="button" class="seg-btn on" data-kind="expense">支出</button>
+            <button type="button" class="seg-btn" data-kind="income">收入</button>
+          </div>
+        </label>
+        <label>
+          <span>金额</span>
+          <input id="ledger-amount" type="number" step="0.01" min="0" placeholder="0.00" inputmode="decimal" required>
+        </label>
+        <label>
+          <span>日期</span>
+          <input id="ledger-date" type="date" required>
+        </label>
+        <label>
+          <span>分类</span>
+          <select id="ledger-category"></select>
+        </label>
+        <label id="ledger-category-custom-wrap" hidden>
+          <span>自定义分类</span>
+          <input id="ledger-category-custom" type="text" list="ledger-category-options" placeholder="输入新分类" autocomplete="off">
+        </label>
+        <label class="wide">
+          <span>备注</span>
+          <input id="ledger-note" type="text" placeholder="可留空，例如：和同事午饭" autocomplete="off">
+        </label>
+      </div>
+      <datalist id="ledger-category-options"></datalist>
+      <p id="ledger-error" class="vault-error" hidden></p>
+      <div class="dialog-actions">
+        <span class="dialog-spacer"></span>
+        <button type="button" id="ledger-cancel" class="btn">取消</button>
+        <button type="submit" class="btn primary">保存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="js/storage.js"></script>
+  <script src="js/model.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/vault-crypto.js"></script>
+  <script src="js/sync-crypto.js"></script>
+  <script src="js/sync-core.js"></script>
+  <script src="js/sync-cloudbase.js"></script>
+  <script src="js/sync-ui.js"></script>
+  <script src="js/ledger.js"></script>
+</body>
+</html>

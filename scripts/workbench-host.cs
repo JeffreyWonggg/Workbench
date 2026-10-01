@@ -111,9 +111,14 @@ sealed class WorkbenchHost {
     HttpListener listener = StartListener();
     if (listener == null) return;
     StartScreenshotHotkey();
+    StartTray();
     ThreadPool.QueueUserWorkItem(delegate { Listen(listener); });
     Thread.Sleep(Timeout.Infinite);
   }
+
+  // 监听所有网卡失败时的原始原因。页面和「启用局域网访问.bat」都拿它说人话，
+  // 免得不管什么原因（没保留 / 端口被占）都一律归到「缺 URL 保留」上。
+  static string ListenError = "";
 
   // 优先监听所有网卡（局域网设备可访问）；未授权监听时回退到仅本机
   static HttpListener StartListener() {
@@ -125,7 +130,18 @@ sealed class WorkbenchHost {
         listener.Start();
         ListenScope = prefixes[i].StartsWith("http://+", StringComparison.Ordinal) ? "all" : "local";
         return listener;
-      } catch (Exception) {
+      } catch (Exception ex) {
+        // 只记第一次（通配符那次）的原因：回退到 127.0.0.1 之后，"为什么只能本机"才说得清
+        if (ListenError.Length == 0) {
+          HttpListenerException hle = ex as HttpListenerException;
+          if (hle != null && hle.ErrorCode == 183) {
+            ListenError = "47321 端口已被其它程序占用";
+          } else if (hle != null) {
+            ListenError = ex.Message + "（错误码 " + hle.ErrorCode.ToString() + "）";
+          } else {
+            ListenError = ex.Message;
+          }
+        }
         try { listener.Close(); } catch (Exception) { }
       }
     }
@@ -381,6 +397,47 @@ sealed class WorkbenchHost {
         return;
       }
 
+      // 截图：Alt+A 点「保存」后先躺在服务端内存里，由浏览器端认领写进数据文件夹
+      if (string.Equals(request.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase) &&
+          string.Equals(request.Url.AbsolutePath, "/shots", StringComparison.OrdinalIgnoreCase)) {
+        if (!string.IsNullOrEmpty(origin) && !ownOrigin) {
+          Send(response, 403, "text/plain", "forbidden");
+          return;
+        }
+        Send(response, 200, "application/json", ShotsJson());
+        return;
+      }
+
+      if (string.Equals(request.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase) &&
+          string.Equals(request.Url.AbsolutePath, "/shot", StringComparison.OrdinalIgnoreCase)) {
+        if (!string.IsNullOrEmpty(origin) && !ownOrigin) {
+          Send(response, 403, "text/plain", "forbidden");
+          return;
+        }
+        Shot shot = FindShot(QueryValue(request, "id"));
+        if (shot == null) {
+          Send(response, 404, "text/plain", "not found");
+          return;
+        }
+        SendBytes(response, 200, "image/png", shot.Bytes);
+        return;
+      }
+
+      if (string.Equals(request.HttpMethod, "POST", StringComparison.OrdinalIgnoreCase) &&
+          string.Equals(request.Url.AbsolutePath, "/shot/ack", StringComparison.OrdinalIgnoreCase)) {
+        if (!ownOrigin) {
+          Send(response, 403, "text/plain", "forbidden");
+          return;
+        }
+        string shotId;
+        using (StreamReader reader = new StreamReader(request.InputStream, Encoding.UTF8)) {
+          shotId = reader.ReadToEnd().Trim();
+        }
+        AckShot(shotId);
+        Send(response, 204, "text/plain", "");
+        return;
+      }
+
       if (!string.Equals(request.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase) &&
           !string.Equals(request.HttpMethod, "HEAD", StringComparison.OrdinalIgnoreCase)) {
         Send(response, 405, "text/plain", "method");
@@ -478,6 +535,7 @@ sealed class WorkbenchHost {
     root["scope"] = ListenScope;
     // 只绑到 127.0.0.1 时，下面这些局域网地址其实连不上，页面据此改成提示而不是给假地址
     root["urls"] = ListenScope == "all" ? urls : new List<string>();
+    root["bindError"] = ListenScope == "all" ? "" : ListenError;
     return new JavaScriptSerializer().Serialize(root);
   }
 
@@ -4144,17 +4202,16 @@ sealed class WorkbenchHost {
       }
     }
 
+    // 不再弹系统「另存为」：截图先缓存在服务端，等浏览器端认领后写进数据文件夹的 screenshot/
     void SaveImage(object sender, EventArgs e) {
-      SaveFileDialog dialog = new SaveFileDialog();
-      dialog.Filter = "PNG 图片|*.png";
-      dialog.FileName = "截图 " + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".png";
-      TopMost = false;
-      DialogResult result = dialog.ShowDialog(this);
-      TopMost = true;
-      if (result != DialogResult.OK) return;
       try {
-        image.Save(dialog.FileName, ImageFormat.Png);
-        Flash("已保存");
+        byte[] bytes;
+        using (MemoryStream stream = new MemoryStream()) {
+          image.Save(stream, ImageFormat.Png);
+          bytes = stream.ToArray();
+        }
+        PushShot(new Shot("截图 " + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".png", bytes));
+        Flash("已存到工作台");
       } catch (Exception) {
         Flash("保存失败");
       }
@@ -4400,6 +4457,255 @@ sealed class WorkbenchHost {
           g.DrawRectangle(border, 0, 0, width - 1, height - 1);
         }
       }
+    }
+  }
+
+  // ===== 截图暂存：Alt+A 保存后先进这个队列，等浏览器端认领 =====
+  // 浏览器拿不到数据文件夹的盘符，所以「存到数据文件夹/screenshot」只能由前端落盘，
+  // 这里只负责把 PNG 暂存住（内存队列，最多留最近 20 张）。
+
+  sealed class Shot {
+    public readonly string Id;
+    public readonly string Name;
+    public readonly byte[] Bytes;
+    public readonly DateTime At;
+
+    public Shot(string name, byte[] bytes) {
+      Id = Guid.NewGuid().ToString("N").Substring(0, 12);
+      Name = name;
+      Bytes = bytes;
+      At = DateTime.Now;
+    }
+  }
+
+  const int ShotQueueLimit = 20;
+  static readonly List<Shot> PendingShots = new List<Shot>();
+  static readonly object ShotLock = new object();
+
+  static void PushShot(Shot shot) {
+    lock (ShotLock) {
+      PendingShots.Add(shot);
+      while (PendingShots.Count > ShotQueueLimit) PendingShots.RemoveAt(0);
+    }
+  }
+
+  static Shot FindShot(string id) {
+    if (string.IsNullOrEmpty(id)) return null;
+    lock (ShotLock) {
+      for (int i = 0; i < PendingShots.Count; i++) {
+        if (PendingShots[i].Id == id) return PendingShots[i];
+      }
+    }
+    return null;
+  }
+
+  static void AckShot(string id) {
+    if (string.IsNullOrEmpty(id)) return;
+    lock (ShotLock) {
+      for (int i = 0; i < PendingShots.Count; i++) {
+        if (PendingShots[i].Id == id) {
+          PendingShots.RemoveAt(i);
+          return;
+        }
+      }
+    }
+  }
+
+  static string ShotsJson() {
+    List<object> list = new List<object>();
+    lock (ShotLock) {
+      for (int i = 0; i < PendingShots.Count; i++) {
+        Shot shot = PendingShots[i];
+        Dictionary<string, object> item = new Dictionary<string, object>();
+        item["id"] = shot.Id;
+        item["name"] = shot.Name;
+        item["size"] = shot.Bytes.Length;
+        item["at"] = shot.At.ToString("s");
+        list.Add(item);
+      }
+    }
+    return new JavaScriptSerializer().Serialize(list);
+  }
+
+  static void SendBytes(HttpListenerResponse response, int status, string type, byte[] body) {
+    byte[] bytes = body == null ? new byte[0] : body;
+    response.StatusCode = status;
+    response.ContentType = type;
+    response.ContentLength64 = bytes.Length;
+    response.OutputStream.Write(bytes, 0, bytes.Length);
+    response.OutputStream.Close();
+  }
+
+  // ===== 系统托盘 =====
+  // 双击图标或右键菜单直接开工作台，不用每次回去双击 bat。
+
+  const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
+  const string RunValueName = "WorkbenchHost";
+
+  static void StartTray() {
+    Thread thread = new Thread(TrayLoop);
+    thread.Name = "tray";
+    thread.IsBackground = true;
+    thread.SetApartmentState(ApartmentState.STA);
+    thread.Start();
+  }
+
+  static void TrayLoop() {
+    try {
+      Application.Run(new TrayForm());
+    } catch (Exception) {
+      // 托盘起不来（比如没有桌面会话）不影响页面本身
+    }
+  }
+
+  sealed class TrayForm : Form {
+    readonly NotifyIcon notify;
+    readonly ToolStripMenuItem autoItem;
+
+    public TrayForm() {
+      ShowInTaskbar = false;
+      FormBorderStyle = FormBorderStyle.None;
+      WindowState = FormWindowState.Minimized;
+
+      ContextMenuStrip menu = new ContextMenuStrip();
+      menu.Items.Add(MakeItem("打开工作台", delegate { OpenWorkbench(false); }));
+      menu.Items.Add(MakeItem("打开同步状态", delegate { OpenWorkbench(true); }));
+      menu.Items.Add(new ToolStripSeparator());
+      menu.Items.Add(MakeItem("启用局域网访问", delegate { RunBatch("启用局域网访问.bat"); }));
+      autoItem = MakeItem("开机自启", delegate { ToggleAutoStart(); });
+      autoItem.Checked = AutoStartEnabled();
+      menu.Items.Add(autoItem);
+      menu.Items.Add(new ToolStripSeparator());
+      menu.Items.Add(MakeItem("退出工作台服务", delegate { Quit(); }));
+
+      notify = new NotifyIcon();
+      notify.Icon = BuildTrayIcon();
+      notify.Text = "工作台";
+      notify.ContextMenuStrip = menu;
+      notify.DoubleClick += delegate { OpenWorkbench(false); };
+      notify.Visible = true;
+    }
+
+    // 这个窗体只是拿来跑消息循环的宿主，永远不显示
+    protected override void SetVisibleCore(bool value) {
+      base.SetVisibleCore(false);
+    }
+
+    static ToolStripMenuItem MakeItem(string text, EventHandler handler) {
+      ToolStripMenuItem item = new ToolStripMenuItem(text);
+      item.Click += handler;
+      return item;
+    }
+
+    void ToggleAutoStart() {
+      bool next = !AutoStartEnabled();
+      if (!SetAutoStart(next)) {
+        Balloon("开机自启没改成，可能被安全软件拦了。");
+        return;
+      }
+      autoItem.Checked = next;
+      Balloon(next ? "已设为开机自启" : "已取消开机自启");
+    }
+
+    void Balloon(string text) {
+      notify.BalloonTipTitle = "工作台";
+      notify.BalloonTipText = text;
+      notify.ShowBalloonTip(2500);
+    }
+
+    void Quit() {
+      notify.Visible = false;
+      notify.Dispose();
+      Environment.Exit(0);
+    }
+
+    static Icon BuildTrayIcon() {
+      try {
+        using (Bitmap bitmap = new Bitmap(32, 32)) {
+          using (Graphics g = Graphics.FromImage(bitmap)) {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.Clear(Color.Transparent);
+            using (SolidBrush brush = new SolidBrush(Color.FromArgb(2, 132, 199))) {
+              g.FillEllipse(brush, 1, 1, 29, 29);
+            }
+            using (SolidBrush white = new SolidBrush(Color.White)) {
+              g.FillRectangle(white, 9, 10, 14, 3);
+              g.FillRectangle(white, 9, 15, 14, 3);
+              g.FillRectangle(white, 9, 20, 14, 3);
+            }
+          }
+          return Icon.FromHandle(bitmap.GetHicon());
+        }
+      } catch (Exception) {
+        return SystemIcons.Application;
+      }
+    }
+  }
+
+  // 开机自启写在 HKCU，不需要管理员权限
+  static bool AutoStartEnabled() {
+    try {
+      using (Microsoft.Win32.RegistryKey key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(RunKeyPath, false)) {
+        if (key == null) return false;
+        return key.GetValue(RunValueName) != null;
+      }
+    } catch (Exception) {
+      return false;
+    }
+  }
+
+  static bool SetAutoStart(bool on) {
+    try {
+      using (Microsoft.Win32.RegistryKey key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(RunKeyPath)) {
+        if (key == null) return false;
+        if (on) key.SetValue(RunValueName, "\"" + ExePath() + "\"");
+        else key.DeleteValue(RunValueName, false);
+      }
+      return true;
+    } catch (Exception) {
+      return false;
+    }
+  }
+
+  static string ExePath() {
+    try {
+      return System.Reflection.Assembly.GetEntryAssembly().Location;
+    } catch (Exception) {
+      return Path.Combine(Root, "scripts", "workbench-host.exe");
+    }
+  }
+
+  // 和「打开工作台.bat」一个优先级：Edge --app → Chrome --app → 系统默认浏览器
+  static void OpenWorkbench(bool withSync) {
+    string url = "http://127.0.0.1:" + Port + "/index.html" + (withSync ? "?sync=1" : "");
+    string[] candidates = new string[] {
+      Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86) + @"\Microsoft\Edge\Application\msedge.exe",
+      Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles) + @"\Microsoft\Edge\Application\msedge.exe",
+      Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) + @"\Microsoft\Edge\Application\msedge.exe",
+      Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles) + @"\Google\Chrome\Application\chrome.exe",
+      Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86) + @"\Google\Chrome\Application\chrome.exe",
+      Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) + @"\Google\Chrome\Application\chrome.exe"
+    };
+    for (int i = 0; i < candidates.Length; i++) {
+      try {
+        if (string.IsNullOrEmpty(candidates[i]) || !File.Exists(candidates[i])) continue;
+        Process.Start(new ProcessStartInfo(candidates[i], "--app=" + url));
+        return;
+      } catch (Exception) {
+      }
+    }
+    try {
+      Process.Start(new ProcessStartInfo(url));
+    } catch (Exception) {
+    }
+  }
+
+  static void RunBatch(string fileName) {
+    try {
+      string full = Path.Combine(Root, fileName);
+      if (!File.Exists(full)) return;
+      Process.Start(new ProcessStartInfo(full));
+    } catch (Exception) {
     }
   }
 }

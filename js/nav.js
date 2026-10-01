@@ -6,9 +6,11 @@
     { id: "weekly", href: "weekly.html", label: "周报", icon: "weekly" },
     { id: "notes", href: "notes.html", label: "笔记", icon: "notes" },
     { id: "resources", href: "resources.html", label: "资料库", icon: "resources" },
+    { id: "ledger", href: "ledger.html", label: "记账", icon: "ledger" },
     { id: "recipes", href: "recipes.html", label: "菜谱", icon: "recipe" },
     { id: "shortcuts", href: "shortcuts.html", label: "快捷方式", icon: "shortcut" },
     { id: "clipboard", href: "clipboard.html", label: "剪贴板", icon: "clipboard" },
+    { id: "files", href: "files.html", label: "收藏", icon: "files" },
     { id: "code", href: "code.html", label: "代码", icon: "code" },
     { id: "lan", href: "lan.html", label: "局域网传文件", icon: "lan" },
     { id: "sn", href: "sn.html", label: "产品目录查询", icon: "sn" },
@@ -97,7 +99,9 @@
     code: '<circle cx="6.5" cy="6.5" r="2.4"/><circle cx="6.5" cy="17.5" r="2.4"/><circle cx="17.5" cy="12" r="2.4"/><path d="M6.5 9v6"/><path d="M8.9 6.5h2.4a3.8 3.8 0 0 1 3.8 3.8"/>',
     recipe: '<path d="M4 11.5h13a6.5 6.5 0 0 1-6.5 6.5A6.5 6.5 0 0 1 4 11.5z"/><path d="M4 11.5c0-2 1.6-3.5 3.6-3.5h5.8c2 0 3.6 1.5 3.6 3.5"/><path d="M20 6.5v11"/><path d="M2.8 20.5h15.4"/>',
     shortcut: '<path d="M13.5 3.5L6 13h5l-1.5 7.5L17 10.5h-5z"/>',
+    ledger: '<path d="M4.5 7.5h15v12h-15z"/><path d="M4.5 7.5V6a1.5 1.5 0 0 1 1.5-1.5h9.5"/><circle cx="15.8" cy="13.5" r="1.4"/>',
     clipboard: '<path d="M9 4.5H7.5A1.5 1.5 0 0 0 6 6v13a1.5 1.5 0 0 0 1.5 1.5h9A1.5 1.5 0 0 0 18 19V6a1.5 1.5 0 0 0-1.5-1.5H15"/><path d="M9 3.6h6v2.8H9z"/><path d="M9.2 12h5.6M9.2 15.5h3.6"/>',
+    files: '<path d="M15.5 7.2l-6.1 6.1a2.9 2.9 0 0 0 4.1 4.1l6.1-6.1a4.8 4.8 0 0 0-6.8-6.8l-6.4 6.4a6.8 6.8 0 0 0 9.6 9.6l5-5"/>',
     refresh: '<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4.5V9H15"/>',
     upload: '<path d="M12 19.5V8.5M7.5 13L12 8.5l4.5 4.5"/><path d="M5 4.5h14"/>',
     download: '<path d="M12 4.5v11M7.5 11L12 15.5l4.5-4.5"/><path d="M5 19.5h14"/>',
@@ -109,6 +113,7 @@
     edit: '<path d="M4 20h4L20 8l-4-4L4 16z"/><path d="M14.5 5.5l4 4"/>',
     trash: '<path d="M4 7h16M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
+    grip: '<path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01"/>',
     menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
     moon: '<path d="M20 14.5A8 8 0 1 1 9.5 4 6.5 6.5 0 0 0 20 14.5z"/>',
     sun: '<circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.4M12 19.1v2.4M4.6 4.6l1.7 1.7M17.7 17.7l1.7 1.7M2.5 12h2.4M19.1 12h2.4M4.6 19.4l1.7-1.7M17.7 6.3l1.7-1.7"/>'
@@ -242,6 +247,7 @@
     paletteHint.addEventListener("click", openPalette);
     foot.append(folder, folderBtn, changeBtn, projectBtn, themeBtn, settingsBtn, paletteHint);
     aside.append(brand, nav, foot);
+    rememberNavScroll(nav);
 
     folderBtn.addEventListener("click", onFolderClick);
     changeBtn.addEventListener("click", () => connectFolder("pick"));
@@ -256,6 +262,7 @@
   }
 
   function renderNavItems(nav, page) {
+    const prevScroll = nav.scrollTop;
     nav.innerHTML = "";
     const pages = navPages();
     if (pages.length === 0) {
@@ -264,6 +271,7 @@
       empty.className = "nav-empty muted";
       empty.textContent = "侧栏是空的。点下面「设置」把页面打开。";
       nav.append(empty);
+      nav.scrollTop = prevScroll;
       return;
     }
     pages.forEach((item) => {
@@ -275,6 +283,34 @@
       if (item.id === page) link.setAttribute("aria-current", "page");
       makeNavItemDraggable(link, item, nav, page);
       nav.append(link);
+    });
+    nav.scrollTop = prevScroll;
+  }
+
+  /* 侧栏每一项都是整页跳转（location.href = item.href），新页面会把侧栏整个重画，
+     滚动位置必然回到最上面。这里把位置存进 sessionStorage，渲染后还原。 */
+  const NAV_SCROLL_KEY = "wb-nav-scroll";
+
+  function rememberNavScroll(nav) {
+    let saved = null;
+    try {
+      saved = sessionStorage.getItem(NAV_SCROLL_KEY);
+    } catch (err) {
+      saved = null;
+    }
+    const apply = () => {
+      const value = Number(saved);
+      if (Number.isFinite(value) && value > 0) nav.scrollTop = value;
+    };
+    apply();
+    // 字体、角标等加载完高度还会变，下一帧再补一次
+    requestAnimationFrame(apply);
+    nav.addEventListener("scroll", () => {
+      try {
+        sessionStorage.setItem(NAV_SCROLL_KEY, String(nav.scrollTop));
+      } catch (err) {
+        // 存不下就算了，不影响使用
+      }
     });
   }
 
@@ -340,6 +376,7 @@
   }
 
   // 顶栏同步状态：小圆点 + 「同步」，点开是云同步面板。手机上比翻侧栏方便。
+  // 插在页面操作按钮左边，让「工具」这类按钮始终占据最右。
   function mountSyncBadge() {
     if (!root.Sync || !root.SyncUI) return;
     const head = document.querySelector(".page-head");
@@ -352,7 +389,9 @@
     dot.className = dotClassOf(root.Sync.status().state);
     button.append(dot, document.createTextNode("同步"));
     button.addEventListener("click", () => root.SyncUI.openDialog());
-    head.append(button);
+    const actions = head.querySelector(".row-actions, .seg");
+    if (actions && actions.parentElement === head) head.insertBefore(button, actions);
+    else head.append(button);
     root.Sync.onChange((status) => {
       dot.className = dotClassOf(status.state);
       button.title = status.state === "error" ? (status.message || "同步失败") : "云同步";
@@ -553,6 +592,11 @@
     }
     document.getElementById("gate").hidden = true;
     document.getElementById("content").hidden = false;
+    // 托盘菜单里的「打开同步状态」会带 ?sync=1 进来
+    if (new URLSearchParams(location.search).get("sync") === "1" && root.SyncUI) {
+      setTimeout(() => root.SyncUI.openDialog(), 300);
+    }
+    startShotReceiver();
     if (root.Sync) {
       try {
         await root.Sync.attach();
@@ -1375,6 +1419,73 @@
       event.preventDefault();
       blockNotice(page);
     });
+  }
+
+  /* ===== 截图领取 =====
+     Alt+A 截完图点「保存」不再弹系统「另存为」，PNG 先暂存在本地服务里。
+     这里轮询认领，写进数据文件夹的 screenshot/，并记一条「收藏」。
+     浏览器拿不到数据文件夹的盘符，所以落盘只能在这一侧做。 */
+
+  const HOST_ORIGIN = "http://127.0.0.1:47321";
+  const SHOT_POLL_MS = 4000;
+  let shotTimer = null;
+
+  function startShotReceiver() {
+    if (!isLocalHost() || shotTimer) return;
+    shotTimer = setInterval(pollShots, SHOT_POLL_MS);
+    pollShots();
+  }
+
+  async function pollShots() {
+    // 数据文件夹没打开就没地方落盘，等打开了下一轮自然会接上
+    if (!root.Workbench || !root.Workbench.fs) return;
+    let list = null;
+    try {
+      const response = await fetch(HOST_ORIGIN + "/shots", { cache: "no-store" });
+      if (!response.ok) return;
+      list = await response.json();
+    } catch (err) {
+      return;   // 服务没在跑 / 断网，都当没有截图
+    }
+    if (!Array.isArray(list) || !list.length) return;
+    for (const shot of list) await claimShot(shot);
+  }
+
+  async function claimShot(shot) {
+    try {
+      const response = await fetch(HOST_ORIGIN + "/shot?id=" + encodeURIComponent(shot.id), { cache: "no-store" });
+      if (!response.ok) return;
+      const blob = await response.blob();
+
+      const index = (await root.Workbench.loadFiles()).slice();
+      const taken = index.map((item) => item.path);
+      const name = String(shot.name || ("截图-" + Date.now() + ".png")).replace(/[\\/:*?"<>|]/g, "_");
+      let fileName = name;
+      let path = "screenshot/" + fileName;
+      if (taken.indexOf(path) >= 0) {
+        fileName = name.replace(/\.png$/i, "") + "-" + shot.id.slice(0, 4) + ".png";
+        path = "screenshot/" + fileName;
+      }
+
+      await root.Workbench.writeFile(path, blob);
+      index.push({
+        id: root.Workbench.uid(),
+        name: fileName,
+        path: path,
+        size: blob.size,
+        type: blob.type || "image/png",
+        kind: "screenshot",
+        project: "",
+        note: "",
+        addedAt: new Date().toISOString(),
+        deletedAt: ""
+      });
+      await root.Workbench.saveFiles(index);
+      await fetch(HOST_ORIGIN + "/shot/ack", { method: "POST", body: shot.id });
+      toast("截图已存到 收藏 · screenshot/");
+    } catch (err) {
+      // 没落地就不 ack，下一轮再试
+    }
   }
 
   root.Nav = { boot, toast, fillProjects, setStatus, icon, openPalette, refreshBadges, pickPath, ask, openSettings, isLocal: isLocalHost };
