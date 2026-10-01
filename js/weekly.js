@@ -105,6 +105,11 @@
     window.addEventListener("resize", () => {
       document.querySelectorAll("textarea.item-text").forEach(fitItem);
     });
+    // 周报按周存一份：别处改了这一周就重新读。有没存完的改动时不打断。
+    Workbench.onChange(["reports.json"], async () => {
+      if (dirty) return;
+      await loadWeek();
+    });
   });
 
   async function changeWeek(delta) {
@@ -337,10 +342,34 @@
     scheduleSave();
   }
 
+  // 写盘失败要重试：以前失败后没人再排定时器，改动就停在页面上不再落盘
+  const SAVE_RETRY_MS = [800, 3000, 8000, 20000];
+  let saveFailures = 0;
+
   function scheduleSave() {
     dirty = true;
+    saveFailures = 0;   // 又有新改动，退避从头算
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(persist, 400);
+    saveTimer = setTimeout(persistQuietly, 400);
+  }
+
+  // 定时触发的那次不往外抛（冒出去只弹一条 toast，问题依旧），失败由 scheduleRetry 记账
+  async function persistQuietly() {
+    try {
+      await persist();
+    } catch (err) {
+      /* 重试已经排好了 */
+    }
+  }
+
+  function scheduleRetry() {
+    saveFailures += 1;
+    if (saveFailures > SAVE_RETRY_MS.length) {
+      Nav.toast("周报没能写进数据文件夹，改动还在页面上，检查下文件夹权限后重试");
+      return;
+    }
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(persistQuietly, SAVE_RETRY_MS[saveFailures - 1]);
   }
 
   async function persist() {
@@ -350,9 +379,11 @@
     dirty = false;
     try {
       await Workbench.saveReport(snapshot);
+      saveFailures = 0;
     } catch (err) {
       dirty = true;
-      throw err;
+      scheduleRetry();
+      throw err;   // 直接 await persist() 的地方（切周、润色）仍要知道这一趟没存上
     }
   }
 

@@ -12,11 +12,19 @@
   const DEBOUNCE_MS = 3000;
   const INDEX_VERSION = 1;
   const CAS_RETRY = 3;
+  // 进页面时的预热同步：距上次「成功」同步不足这么久、本机又没有待推的改动，就整轮跳过。
+  // 切页 / 刷新本来就不产生改动，这一轮只会白读一次云端清单；超过窗口照常同步一次。
+  const IDLE_SYNC_MS = 30 * 1000;
 
   // files.json 不在这里：它指向 files/ 里的二进制本体，那些不上云，
   // 同步过去只会得到一堆打不开的卡片。
-  const JSON_UNITS = ["todos.json", "reports.json", "notes.json", "recipes.json", "ledger.json", "software.json", "vault.json", "deepseek.json"];
+  // chart-settings.json 也不在：擅长和弦、音量这类属于本机偏好，换台设备不应该被覆盖。
+  // deepseek.json 也不在：那是本机查余额留下的快照，每台设备各查各的，
+  // 同步过去没有意义，还会因为两边都在写而反复产生冲突副本。
+  const JSON_UNITS = ["todos.json", "reports.json", "notes.json", "recipes.json", "ledger.json", "software.json", "vault.json", "charts.json", "chart-settings.json"];
   const META_UNIT = "meta.json";          // 只同步项目清单，本机路径（工具、git 根目录）不外传
+  // 记谱偏好只上云「人」的那两个字段（擅长和弦、推荐调权重），音量是设备属性，各留各的
+  const CHART_SETTINGS_UNIT = "chart-settings.json";
 
   let state = null;
   let remote = null;
@@ -78,6 +86,10 @@
       version: 1,
       deviceId: (parsed && parsed.deviceId) || shortId(),
       lastSyncAt: (parsed && parsed.lastSyncAt) || "",
+      // 只记「成功」的那次：失败也吃节流的话，网络一恢复反而要等窗口过期才会重试
+      lastOkAt: (parsed && parsed.lastOkAt) || "",
+      // 最近一次失败也存：健康度面板靠它归类（网络 / 凭证 / 权限），刷新页面后不该消失
+      lastError: (parsed && parsed.lastError) || null,
       base: (parsed && parsed.base && typeof parsed.base === "object") ? parsed.base : {},
       conflicts: Array.isArray(parsed && parsed.conflicts) ? parsed.conflicts : []
     };
@@ -85,7 +97,44 @@
     return state;
   }
 
+  // 两个标签页各持一份内存基准（loadState 有缓存），整份覆盖写会互相冲掉对方的冲突记录：
+  // 结果是磁盘上留着 .conflict-*.json，面板里却看不到、也删不掉。
+  // 写之前先跟磁盘对一次：把别的标签页写进去的记录补进来；
+  // 本页记着、但副本文件已经不在了的（用户在别处删掉的）跟着去掉——
+  // 否则老标签页一保存就会把它写回来，面板上留一条点开是空的记录。
+  async function mergeConflictsFromDisk() {
+    if (!state || !root.Workbench || !root.Workbench.fs) return;
+    let parsed = null;
+    try {
+      const text = await root.Workbench.readText(STATE_FILE);
+      if (text && text.trim()) parsed = JSON.parse(text);
+    } catch (err) {
+      return;   // 读不出来就照本页这份写，最多退回老行为
+    }
+    if (!parsed || !Array.isArray(parsed.conflicts)) return;
+    const kept = [];
+    for (const item of state.conflicts) {
+      if (!item || !item.path) continue;
+      let exists = true;
+      try {
+        exists = (await root.Workbench.readText(item.path)) != null;
+      } catch (err) {
+        exists = true;   // 读不出（权限之类的）不等于文件没了，保守留下
+      }
+      if (exists) kept.push(item);
+    }
+    const seen = Object.create(null);
+    kept.forEach((item) => {
+      seen[item.path] = true;
+    });
+    parsed.conflicts.forEach((item) => {
+      if (item && item.path && !seen[item.path]) kept.push(item);
+    });
+    state.conflicts = kept;
+  }
+
   async function saveState() {
+    await mergeConflictsFromDisk();
     const wasApplying = applying;
     applying = true;
     try {
@@ -115,6 +164,24 @@
     return paths.concat(notes.filter((path) => /\.md$/.test(path)));
   }
 
+  // 面板「同步范围」里的中文名：路径 → 用户看得懂的名字
+  const UNIT_INFO = {
+    "todos.json": { label: "待办" },
+    "reports.json": { label: "周报" },
+    "notes.json": { label: "笔记索引" },
+    "recipes.json": { label: "菜谱" },
+    "ledger.json": { label: "记账" },
+    "software.json": { label: "软件号" },
+    "vault.json": { label: "资料库（加密）" },
+    "charts.json": { label: "记谱" },
+    "chart-settings.json": { label: "记谱偏好（擅长和弦、推荐调权重）" },
+    "meta.json": { label: "项目清单（只同步项目名）" }
+  };
+
+  function unitLabel(path) {
+    return UNIT_INFO[path] ? UNIT_INFO[path].label : path;
+  }
+
   // meta.json 只带可移植字段上云：项目清单和「示例菜谱已灌过」标记
   function projectMeta(text) {
     if (text == null) return null;
@@ -130,14 +197,55 @@
     }
   }
 
+  // 记谱偏好只带「人」的那一半上云：擅长和弦、推荐调权重。
+  // 音量是设备属性——手机和电脑该各留各的，同步过去只会互相覆盖。
+  // 这样算出的 hash 也不会因为调了一下音量就判定「本地改过」而白推一次。
+  function portableChartSettings(text) {
+    if (text == null) return null;
+    try {
+      const raw = JSON.parse(text);
+      return JSON.stringify({
+        favorites: Array.isArray(raw.favorites) ? raw.favorites : [],
+        weight: Number(raw.weight) || 0
+      });
+    } catch (err) {
+      return null;
+    }
+  }
+
+  // 拉回来的记谱偏好只盖那两个字段，音量保持本机这份
+  async function applyChartSettings(text) {
+    let incoming = null;
+    try {
+      incoming = JSON.parse(text);
+    } catch (err) {
+      return;   // 云端这份解不开就跳过，别把整轮同步带崩
+    }
+    const current = await root.Workbench.readText(CHART_SETTINGS_UNIT);
+    let settings = {};
+    if (current && current.trim()) {
+      try {
+        settings = JSON.parse(current);
+      } catch (err) {
+        settings = {};
+      }
+    }
+    if (Array.isArray(incoming.favorites)) settings.favorites = incoming.favorites;
+    if (incoming.weight != null) settings.weight = Number(incoming.weight) || 0;
+    await root.Workbench.writeText(CHART_SETTINGS_UNIT, JSON.stringify(settings, null, 2) + "\n");
+  }
+
   async function unitText(path) {
     const raw = await root.Workbench.readText(path);
     if (raw == null) return null;
-    return path === META_UNIT ? projectMeta(raw) : raw;
+    if (path === META_UNIT) return projectMeta(raw);
+    if (path === CHART_SETTINGS_UNIT) return portableChartSettings(raw);
+    return raw;
   }
 
   async function applyUnit(path, text) {
     if (path === META_UNIT) return applyMeta(text);
+    if (path === CHART_SETTINGS_UNIT) return applyChartSettings(text);
     await root.Workbench.writeText(path, text);
   }
 
@@ -197,7 +305,16 @@
   /* ===== 远端读写 ===== */
 
   function objectKey(path) {
-    return encodeURIComponent(path);
+    // 云存储的 key 不允许出现 "%"：整条路径 encodeURIComponent 会把分隔符 "/" 也变成 "%2F"，
+    // 服务端按 key 的字符集校验时一律回 STORAGE_INVALID_KEY（上传/下载/删除全废，清单却不受影响，
+    // 因为 index.json、probe.json 这些固定路径不含需要转义的字符，所以配置探测能过、一推数据才炸）。
+    // 只对每一段单独编码、把 "/" 留作路径分隔符，段内的空格等特殊字符照样会被转义。
+    return String(path || "")
+      .replace(/^\/+/, "")
+      .split("/")
+      .filter((seg) => seg !== "")
+      .map((seg) => encodeURIComponent(seg))
+      .join("/");
   }
 
   function emptyIndex() {
@@ -220,6 +337,14 @@
 
   /* ===== 主流程 ===== */
 
+  // 刚同步成功过、本机也没有待推的改动 —— 这一轮没事可做，整轮省掉（连那次读云端清单都不做）。
+  // pending 是 refreshPending() 在本机算出来的，不碰云端；attach 里就在 runSync 之前刷过一次。
+  function justSynced() {
+    if (status.pending) return false;
+    const at = Date.parse(state.lastOkAt || "");
+    return !!at && Date.now() - at < IDLE_SYNC_MS;
+  }
+
   async function runSync(options) {
     const opts = options || {};
     if (!remote) {
@@ -236,8 +361,25 @@
     try {
       await loadState();
       if (opts.force) state.base = {};
+      // 只有 attach 那一路带 idle 标记；手动点同步、写完待推、解锁后那几种照常走，不会漏掉改动
+      if (opts.idle && !opts.force && justSynced()) {
+        setStatus({ state: "ok", message: "", lastSyncAt: state.lastOkAt, conflicts: state.conflicts.length });
+        return { ok: true, skipped: true, pulled: 0, pushed: 0, conflicts: 0 };
+      }
       let got = await remote.getIndex();
-      let index = got.text ? await root.SyncCrypto.open(got.text) : emptyIndex();
+      let index = emptyIndex();
+      let rebuilt = false;
+      if (got.text) {
+        try {
+          index = await root.SyncCrypto.open(got.text);
+        } catch (err) {
+          // 云端那份清单解不开（多半是上一次配置 / 另一台设备用别的密码写的）。
+          // 「以本机为准」这种模式下它本来就要被这一版覆盖，卡在这里等于永远推不上去，
+          // 所以按空清单继续；seq 留着做乐观锁。普通同步仍然如实报错，不静默覆盖。
+          if (!opts.force) throw err;
+          rebuilt = true;
+        }
+      }
       if (!index || typeof index.files !== "object") index = emptyIndex();
 
       const paths = [];
@@ -247,6 +389,8 @@
       const uploads = [];
       let pulled = 0;
       let conflicts = 0;
+      // 云端清单这一轮有没有真的变：没变就别写（写一次 = 一次读 + 一次写，白烧额度）
+      let dirtyIndex = rebuilt;
 
       for (const path of paths) {
         if (!isUnit(path)) continue;
@@ -269,6 +413,7 @@
           await remote.deleteObject(objectKey(path));
           delete index.files[path];
           delete state.base[path];
+          dirtyIndex = true;
           if (remoteText != null) {
             await saveConflict(path, remoteText, entry.deviceId);
             conflicts += 1;
@@ -283,6 +428,13 @@
             state.base[path] = { rev: entry.rev, hash: await sha256(await unitText(path)) };
             pulled += 1;
           }
+          continue;
+        }
+
+        // 两边内容其实一模一样：新增单元第一次同步时常这样（比如两台设备都还是默认偏好）。
+        // 直接对齐基准就好，没必要留一份内容重复的冲突副本。
+        if (remoteChanged && localChanged && entry.hash && entry.hash === localHash && !opts.force) {
+          state.base[path] = { rev: entry.rev, hash: localHash };
           continue;
         }
 
@@ -312,14 +464,25 @@
         state.base[item.path] = { rev: index.files[item.path].rev, hash: item.hash };
       }
 
+      if (uploads.length) dirtyIndex = true;
       index.updatedAt = new Date().toISOString();
-      let saved = false;
+      // 没东西要写就直接认成功：云端清单一个字没变，再读写一遍纯属浪费额度
+      let saved = !dirtyIndex;
       for (let attempt = 0; attempt < CAS_RETRY && !saved; attempt += 1) {
         saved = await remote.putIndex(await root.SyncCrypto.seal(index), got.etag || null);
         if (!saved) {
           // 别人先写进了清单：把他的 rev 抬过去，我的这版继续往上加
           const again = await remote.getIndex();
-          const fresh = again.text ? await root.SyncCrypto.open(again.text) : emptyIndex();
+          let fresh = emptyIndex();
+          if (again.text) {
+            try {
+              fresh = await root.SyncCrypto.open(again.text);
+            } catch (err) {
+              // 同上：以本机为准时，读不懂的清单不该挡路
+              if (!opts.force) throw err;
+            }
+          }
+          if (!fresh || typeof fresh.files !== "object") fresh = emptyIndex();
           const mine = index.files;
           index.files = {};
           for (const path of Object.keys(fresh.files || {})) {
@@ -365,9 +528,10 @@
           conflicts: state.conflicts.length
         });
       } else {
+        state.lastOkAt = state.lastSyncAt;
         setStatus({
           state: "ok",
-          message: "",
+          message: rebuilt ? "云端原有清单解不开（另一把同步密码写的），已按「以本机为准」重建" : "",
           lastSyncAt: state.lastSyncAt,
           conflicts: state.conflicts.length
         });
@@ -410,6 +574,54 @@
     }
   }
 
+  // 面板「同步范围」用：只读本机，列出会同步的单元和各自的状态。
+  // 刻意不调 loadState()：那会把内存里的基准重置一遍，可能带偏正在跑的同步；
+  // 内存里没有基准时按「还没同步过」算，展示上不会出错。
+  async function scope() {
+    const base = (state && state.base) || {};
+    let paths = [];
+    try {
+      paths = await localUnits();
+    } catch (err) {
+      paths = [];
+    }
+    const items = [];
+    let noteCount = 0;
+    let noteBytes = 0;
+    let notePending = 0;
+    for (const path of paths) {
+      if (!isUnit(path)) continue;
+      const text = await unitText(path);
+      const hash = text == null ? null : await sha256(text);
+      const known = base[path] || null;
+      const pending = text != null && (!known || known.hash !== hash);
+      // 笔记正文一篇一个文件，可能有几十上百篇，合成一条显示
+      if (/^notes\//.test(path)) {
+        if (text != null) { noteCount += 1; noteBytes += text.length; }
+        if (pending) notePending += 1;
+        continue;
+      }
+      items.push({
+        path,
+        label: unitLabel(path),
+        exists: text != null,
+        bytes: text == null ? 0 : text.length,
+        pending
+      });
+    }
+    // 一篇都没有时也列出来，用户才知道这一类在同步范围里
+    items.push({
+      path: "notes/*.md",
+      label: "笔记正文",
+      exists: noteCount > 0,
+      count: noteCount,
+      bytes: noteBytes,
+      pending: notePending > 0,
+      pendingCount: notePending
+    });
+    return { items };
+  }
+
   /* ===== 触发 ===== */
 
   function schedulePush() {
@@ -441,10 +653,25 @@
         }
       }
     }
+    // 刷新 / 换页面之后：密钥能用设备密钥恢复，但云端适配器是内存对象，默认是空的。
+    // 这里按本机保存的配置把它重建出来，否则面板看着「已解锁」，一点同步却回「未配置」。
+    if (!remote && root.SyncCrypto.isUnlocked() && root.SyncCloudbase && root.SyncCrypto.config) {
+      try {
+        const saved = await root.SyncCrypto.config();
+        if (saved) remote = await root.SyncCloudbase.create(saved);
+      } catch (err) {
+        /* 建不起来就等用户重新输密码解锁 */
+      }
+    }
     root.addEventListener("workbench-write", onWrite);
     await refreshPending();
-    // 进页面时先拉一次：这一步是等着的，页面渲染时看到的就是同步后的数据
-    if (remote && root.SyncCrypto.isUnlocked()) await runSync({});
+    // 配过了、只是这一页还没解锁：状态如实标成「等待解锁」，别显示成「未开启」
+    if (!remote && root.SyncCrypto.hasConfig() && !root.SyncCrypto.isUnlocked()) {
+      setStatus({ state: "locked", message: "" });
+    }
+    // 进页面时先拉一次：这一步是等着的，页面渲染时看到的就是同步后的数据。
+    // 带 idle：刚同步过又不缺东西就跳过，切页 / 刷新不再每次都读一遍云端清单。
+    if (remote && root.SyncCrypto.isUnlocked()) await runSync({ idle: true });
   }
 
   function setRemote(impl) {
@@ -459,6 +686,8 @@
     const text = String(message || "");
     if (!text) return "";
     if (/抢先/.test(text)) return "conflict";
+    // 解不开密文本质上是密钥问题（用错了密码 / 换过配置），不是「其它」
+    if (/无法解密|密钥不匹配|内容已损坏|密文信封/.test(text)) return "credential";
     if (/匿名登录|anonymous|signIn|登录|密码|凭证|token|401|403/i.test(text)) return "credential";
     if (/环境 ID|环境|env|权限|authorized|存储返回异常/i.test(text)) return "permission";
     if (/网络|network|fetch|timeout|超时|连不上|offline|加载云 SDK/i.test(text)) return "network";
@@ -501,6 +730,9 @@
       report.remoteUpdatedAt = (index && index.updatedAt) || "";
       report.remoteReachable = true;
       Object.keys(files).forEach((path) => {
+        // 已经不在同步范围内的单元（云端可能还留着别的设备推过的旧副本）不该算进版本差，
+        // 否则面板会永远显示「落后一条」，而这一台其实再也不会去拉它
+        if (!isUnit(path)) return;
         const cloudRev = Number(files[path].rev) || 0;
         const baseRev = state.base[path] ? Number(state.base[path].rev) || 0 : 0;
         const gap = cloudRev - baseRev;
@@ -615,6 +847,7 @@
     status: getStatus,
     onChange,
     refresh: refreshPending,
+    scope,
     conflicts: getConflicts,
     restoreConflict,
     removeConflict,

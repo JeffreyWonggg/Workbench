@@ -558,6 +558,32 @@
     document.getElementById("content").hidden = true;
   }
 
+  // 数据文件读不出来（多半是 JSON 被改坏、或上次写到一半）：
+  // 与其留下一片空白加一句看不懂的报错，不如说清楚是哪个文件、还能怎么办
+  function showDataError(err) {
+    const gate = document.getElementById("gate");
+    gate.innerHTML = "";
+    gate.className = "gate";
+    const card = document.createElement("div");
+    card.className = "card gate-card";
+    const heading = document.createElement("h1");
+    heading.textContent = "数据读不出来";
+    const text = document.createElement("p");
+    text.textContent = (err && err.message) ? err.message : "这个页面的数据文件读不出来。";
+    const actions = document.createElement("div");
+    actions.className = "gate-actions";
+    const reload = document.createElement("button");
+    reload.type = "button";
+    reload.className = "btn primary";
+    reload.textContent = "重新加载";
+    reload.addEventListener("click", () => location.reload());
+    actions.append(reload);
+    card.append(heading, text, actions);
+    gate.append(card);
+    gate.hidden = false;
+    document.getElementById("content").hidden = true;
+  }
+
   // 云同步能不能顶替本地文件夹：配过、并且这一页已经拿到密钥（输过密码，或本机记住过）
   async function cloudReady() {
     if (!root.Sync || !root.SyncCrypto) return false;
@@ -586,6 +612,13 @@
     setStatus(status);
     refreshBadges();
     window.addEventListener("workbench-todos", refreshBadges);
+    // 项目清单在别处改了（另一台设备同步过来、或别的标签页）：
+    // 转成现有事件，各页的筛选下拉框自己会补上，不用每个页面各写一遍
+    if (root.Workbench && root.Workbench.onChange) {
+      root.Workbench.onChange(["meta.json"], () => {
+        root.dispatchEvent(new CustomEvent("workbench-projects"));
+      });
+    }
     // 没有数据文件夹时（手机、非安全上下文）只要云同步能用就放行：
     // 数据落在 IndexedDB，云端才是权威副本。
     if (!status.ok && !(options && options.optionalFolder) && !(await cloudReady())) {
@@ -606,7 +639,13 @@
         // 同步没跑起来不影响本地使用
       }
     }
-    await onReady();
+    try {
+      await onReady();
+    } catch (err) {
+      // 页面初始化炸了（最常见是某个 JSON 读不出来）就摆明说，
+      // 别留一个渲染了一半的页面让人以为数据没了
+      showDataError(err);
+    }
   }
 
   function openProjects() {

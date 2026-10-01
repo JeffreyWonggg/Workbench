@@ -142,6 +142,17 @@
     return config;
   }
 
+  // 用当前密钥解开本机保存的配置（不经过密码）：刷新、换页面后重建云端适配器要用。
+  // 配置本体是密文，只有解锁后才读得出来；读不出来就返回 null，由调用方决定怎么办。
+  async function config() {
+    if (!key) return null;
+    try {
+      return await root.VaultCrypto.decrypt(key, JSON.parse(localStorage.getItem(CONFIG_KEY)));
+    } catch (err) {
+      return null;
+    }
+  }
+
   function isUnlocked() {
     return !!key;
   }
@@ -217,15 +228,34 @@
     return JSON.stringify(await root.VaultCrypto.encrypt(key, settings, data));
   }
 
+  // 解不开时别只说「密钥不匹配」：把本机盐值和密文里带的盐值比一比。
+  // 盐值不同 = 这份密文是另一次配置（另一把密码 / 另一台设备 / 另一个访问地址）写的，
+  // 本机这把密钥天生解不开它，跟「内容损坏」是两回事，得分开告诉用户。
   async function open(text) {
     if (!key) throw new Error("同步尚未解锁");
-    return root.VaultCrypto.decrypt(key, JSON.parse(text));
+    let envelope = null;
+    try {
+      envelope = JSON.parse(text);
+    } catch (err) {
+      throw new Error("云端数据不是完整的密文信封（内容已损坏或被截断）");
+    }
+    try {
+      return await root.VaultCrypto.decrypt(key, envelope);
+    } catch (err) {
+      const mine = (settings && settings.salt) ? String(settings.salt) : "";
+      const theirs = (envelope && envelope.salt) ? String(envelope.salt) : "";
+      if (mine && theirs && mine !== theirs) {
+        throw new Error("这份云端数据是用另一把同步密码加密的（来自上一次配置或另一台设备），本机密钥与它不配对：要用它就得输当初那把密码，否则确认本机数据是全的，就按「以本机为准」重建云端");
+      }
+      throw err;
+    }
   }
 
   root.SyncCrypto = {
     setup,
     unlock,
     updateConfig,
+    config,
     isUnlocked,
     lock,
     clear,

@@ -31,6 +31,12 @@
     bind();
     await load();
     applyHash(true);
+    // 记谱已纳入云同步：别处（另一台设备、另一个标签页）改了歌就重新读一遍。
+    // 正在编辑时不打断，编辑器的内容还没存。
+    Workbench.onChange(["charts.json", "chart-settings.json"], async () => {
+      if (state.editing) return;
+      await load();
+    });
   });
 
   /* ===== 数据 ===== */

@@ -19,6 +19,11 @@
     state.items = await Workbench.loadFiles();
     bind();
     render();
+    // 收藏清单在别处被改（另一台设备同步过来、或别的标签页）就重新读一遍
+    Workbench.onChange(["files.json"], async () => {
+      state.items = await Workbench.loadFiles();
+      render();
+    });
   });
 
   /* ===== 交互 ===== */

@@ -10,6 +10,10 @@
     window.addEventListener("workbench-projects", () => {
       Nav.fillProjects(document.getElementById("capture-project"));
     });
+    // 别处改了待办（另一个标签页、或云同步拉回来的），首页的焦点列表跟着变
+    Workbench.onChange(["todos.json"], async () => {
+      await render();
+    });
   });
 
   function bindCapture() {

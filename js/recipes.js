@@ -18,6 +18,10 @@
     bind();
     await load();
     applyHash(true);
+    // 菜谱在别处被改就重新读一遍（编辑中的弹窗是独立 DOM，不受影响）
+    Workbench.onChange(["recipes.json"], async () => {
+      await load();
+    });
   });
 
   function bind() {

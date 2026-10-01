@@ -36,6 +36,12 @@
       Nav.fillProjects(document.getElementById("todo-project"));
       render();
     });
+    // 别的标签页改了待办、或云同步把改动拉了回来：重新读一遍再渲染。
+    // 不然这一页还拿着旧快照，下次保存会把那边的改动整份盖掉。
+    Workbench.onChange(["todos.json"], async () => {
+      todos = await Workbench.loadTodos();
+      render();
+    });
   });
 
   function bind() {

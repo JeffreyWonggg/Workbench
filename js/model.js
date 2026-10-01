@@ -583,10 +583,93 @@
     return Array.isArray(items) ? items.filter((item) => !isDeleted(item)) : [];
   }
 
+  // 别的标签页改了同一个数据文件夹时，本页也得知道。同源 BroadcastChannel 最合适：
+  // 不用轮询，也不像 storage 事件那样只在 localStorage 上触发。老浏览器没有就退化成本页内通知。
+  const channel = (function () {
+    try {
+      if (typeof root.BroadcastChannel === "function") return new root.BroadcastChannel("workbench");
+    } catch (err) { /* 不支持就算了，只是别的标签页看不到实时更新 */ }
+    return null;
+  })();
+
+  // 上次读到的原文。写之前跟磁盘比对，不一致说明别处改过（另一个标签页、或云同步拉回来的）
+  const knownText = Object.create(null);
+
   // 落地层广播变更：同步模块监听 workbench-write，自己决定什么时候推、推哪些。
   // 页面代码不需要知道同步的存在，同步失败也不该影响本地读写。
   function notifyChange(kind, path) {
     root.dispatchEvent(new CustomEvent("workbench-write", { detail: { kind: kind, path: path } }));
+    // 页面听的是 workbench-change：别的标签页发来的变更也走这个事件，页面只认这一个
+    root.dispatchEvent(new CustomEvent("workbench-change", { detail: { kind: kind, path: path } }));
+    if (channel) {
+      try {
+        channel.postMessage({ kind: kind, path: path, at: Date.now() });
+      } catch (err) { /* 广播不通不影响本机读写 */ }
+    }
+  }
+
+  if (channel) {
+    channel.onmessage = (event) => {
+      const data = event.data;
+      if (!data || !data.path) return;
+      // 只转成页面用的事件：同步模块听的是 workbench-write，
+      // 别让它以为本机又有了待推的改动（那边只是别人已经写下去的东西）
+      root.dispatchEvent(new CustomEvent("workbench-change", {
+        detail: { kind: data.kind, path: data.path, outside: true }
+      }));
+    };
+  }
+
+  // 页面注册自己关心的数据文件：本机一改就回调。第二个参数表示「是别的标签页改的」
+  function onChange(paths, handler) {
+    const wanted = Array.isArray(paths) ? paths : [paths];
+    root.addEventListener("workbench-change", (event) => {
+      const detail = event.detail || {};
+      if (detail.path && wanted.indexOf(detail.path) >= 0) handler(detail.path, !!detail.outside);
+    });
+  }
+
+  // 数组且元素带 id 时的合并：以磁盘为底，本地较新的条目压上去，两边独有的都留着。
+  // 判不出新旧（没有 updatedAt）时以本地为准——本地这份是用户刚做的操作，不能默默丢掉。
+  function mergeById(local, disk) {
+    if (!Array.isArray(local) || !Array.isArray(disk)) return null;
+    const keyed = (list) => list.every((item) => item && typeof item === "object" && item.id);
+    if (!keyed(local) || !keyed(disk)) return null;
+    const map = new Map();
+    disk.forEach((item) => map.set(item.id, item));
+    local.forEach((item) => {
+      const other = map.get(item.id);
+      if (!other) {
+        map.set(item.id, item);
+        return;
+      }
+      const mine = String(item.updatedAt || "");
+      const theirs = String(other.updatedAt || "");
+      if (!mine || !theirs || mine > theirs) map.set(item.id, item);
+    });
+    return Array.from(map.values());
+  }
+
+  // 写之前先看一眼磁盘：和上次读到的不一样说明别处改过，先并起来再写。
+  // 否则这一写会把别人的改动整份抹掉——每个标签页各持一份内存快照时必现。
+  async function mergeExternal(fs, path, data) {
+    const base = knownText[path];
+    if (base === undefined) return data;   // 这一路没读过，无从比对
+    let disk = null;
+    try {
+      disk = await fs.readText(path);
+    } catch (err) {
+      return data;
+    }
+    if (disk == null || disk === base) return data;   // 没被改过，照原样写
+    let parsed = null;
+    try {
+      parsed = JSON.parse(disk);
+    } catch (err) {
+      return data;   // 磁盘上这份是坏的，以我写的为准，顺手把它修好
+    }
+    const merged = mergeById(data, parsed);
+    return merged === null ? data : merged;
   }
 
   function deletedItems(items) {
@@ -605,6 +688,7 @@
     STATES,
     normalizeTools,
     normalizeShortcuts,
+    onChange,
     normalizeGit,
     normalizeSoftware,
     normalizeRecipes,
@@ -714,11 +798,22 @@
         await this.writeJson(path, fallback);
         return structuredClone(fallback);
       }
-      return JSON.parse(text);
+      // 记住读到时的样子：写之前拿它跟磁盘比对，就能判断有没有被别处改过
+      knownText[path] = text;
+      try {
+        return JSON.parse(text);
+      } catch (err) {
+        // 坏文件以前会一路冒到页面初始化，留下一片空白和一句看不懂的报错
+        throw new Error(path + " 读不出来：" + err.message
+          + "。可能被手工改坏了，或者上一次没写完。改回正确的 JSON，或用备份覆盖它。");
+      }
     },
 
     async writeJson(path, data) {
-      await this.fs.writeText(path, JSON.stringify(data, null, 2) + "\n");
+      const merged = await mergeExternal(this.fs, path, data);
+      const text = JSON.stringify(merged, null, 2) + "\n";
+      await this.fs.writeText(path, text);
+      knownText[path] = text;
       notifyChange("write", path);
     },
 

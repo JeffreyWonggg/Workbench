@@ -18,6 +18,11 @@
     state.items = await Workbench.loadLedgers();
     bind();
     render();
+    // 记账在别处被改就重新读一遍再渲染
+    Workbench.onChange(["ledger.json"], async () => {
+      state.items = await Workbench.loadLedgers();
+      render();
+    });
   });
 
   /* ===== 绑定 ===== */

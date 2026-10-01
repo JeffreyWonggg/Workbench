@@ -2181,6 +2181,43 @@ h2 { font-size: var(--text-lg); }
 
 .sync-health-hint { font-size: var(--text-xs); line-height: 1.55; }
 
+/* 同步范围：哪些数据会上云、各自现在什么状态 */
+.sync-scope {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  border-top: 1px solid var(--card-line);
+  padding-top: var(--space-3);
+}
+
+.sync-scope-head { color: var(--muted); font-size: var(--text-sm); font-weight: 600; }
+
+.sync-scope-list { display: flex; flex-direction: column; }
+
+.sync-scope-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 5px 0;
+  font-size: 13px;
+}
+
+.sync-scope-name {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.sync-scope-path { font-size: var(--text-xs); overflow-wrap: anywhere; }
+
+.sync-scope-status { flex: none; color: var(--muted); font-size: var(--text-xs); }
+
+.sync-scope-item.is-pending .sync-scope-status { color: var(--pending); }
+
+.sync-scope-hint { margin: 0; font-size: var(--text-xs); line-height: 1.55; }
+
 .sync-dot {
   flex: none;
   width: 8px;

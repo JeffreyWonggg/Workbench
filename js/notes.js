@@ -31,6 +31,13 @@
       if (select && currentId) Nav.fillProjects(select, select.value);
       renderList();
     });
+    // 别处改了笔记索引就重新读。正在打字（dirty）时不打断——
+    // 编辑器里的内容还没存，这时候换掉会让人以为白写了。
+    Workbench.onChange(["notes.json"], async () => {
+      if (dirty) return;
+      notes = await Workbench.loadNoteIndex();
+      renderList();
+    });
   });
 
   function bind() {
@@ -1371,11 +1378,44 @@
     markDirty();
   }
 
+  // 写盘失败不能就这么算了：以前失败后没人再排定时器，界面会永远停在「正在保存…」，
+  // 而改动其实还在编辑器里、从此不再尝试。这里按几档退避重试，都失败才放弃并明说。
+  const SAVE_RETRY_MS = [800, 3000, 8000, 20000];
+  let saveFailures = 0;
+
+  function setSaveState(text) {
+    const node = document.getElementById("save-state");
+    if (node) node.textContent = text;
+  }
+
+  // 定时触发的那次不该往外抛（冒出去只会弹一条 toast，问题依旧），失败由 scheduleRetry 记账
+  async function flushQuietly() {
+    try {
+      await flush();
+    } catch (err) {
+      /* 重试已经排好了 */
+    }
+  }
+
+  function scheduleRetry() {
+    saveFailures += 1;
+    if (saveFailures > SAVE_RETRY_MS.length) {
+      setSaveState("保存失败");
+      Nav.toast("笔记没能写进数据文件夹，改动还在编辑器里，检查下文件夹权限后重试");
+      return;
+    }
+    const wait = SAVE_RETRY_MS[saveFailures - 1];
+    setSaveState("保存失败，" + Math.round(wait / 1000) + " 秒后重试");
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(flushQuietly, wait);
+  }
+
   function markDirty() {
     dirty = true;
-    document.getElementById("save-state").textContent = "正在保存…";
+    saveFailures = 0;   // 又有新改动，退避从头算
+    setSaveState("正在保存…");
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(flush, 500);
+    saveTimer = setTimeout(flushQuietly, 500);
   }
 
   // 只保存当前笔记，不重建列表。切换笔记时走这里，避免列表滚动位置归零、以及
@@ -1413,8 +1453,15 @@
   }
 
   async function flush() {
-    const saved = await saveCurrent();
-    if (saved) renderList();
+    try {
+      const saved = await saveCurrent();
+      if (saved) renderList();
+      saveFailures = 0;
+      return saved;
+    } catch (err) {
+      scheduleRetry();
+      throw err;   // 直接 await flush() 的地方（比如新建笔记）仍要知道这一趟没存上
+    }
   }
 
   async function createNote() {

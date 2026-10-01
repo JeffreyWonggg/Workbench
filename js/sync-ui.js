@@ -194,7 +194,7 @@
   const ERROR_KIND_LABEL = { network: "网络", credential: "凭证", permission: "权限", conflict: "冲突", unknown: "其它" };
   const ERROR_KIND_HINT = {
     network: "连不上云开发环境：先看网络 / 代理，再确认环境 ID 没写错。",
-    credential: "登录或密码没过：到 CloudBase 控制台确认开了「匿名登录」；提示「同步密码不对」就先重新解锁一次。",
+    credential: "登录或密码没过：到控制台确认「身份认证 → 登录方式」里匿名登录已开启，并把工作台访问地址加进 WEB 安全域名；提示「同步密码不对」就先重新解锁一次。",
     permission: "像是权限或环境不对：确认环境 ID 属于你自己的账号，云存储没有被停用。",
     conflict: "另一台设备同时改了同一份数据：下次同步会自动合并，被覆盖的那版会存成冲突副本。",
     unknown: "原因没归出来，看上面状态里的原始报错。"
@@ -290,6 +290,72 @@
     return hints;
   }
 
+  /* ===== 同步范围：让用户直接看见「哪些数据会上云」 ===== */
+
+  const SCOPE_TTL = 5000;
+  let scopeCache = { at: 0, data: null };
+
+  function formatBytes(size) {
+    const n = Number(size) || 0;
+    if (n < 1024) return n + " B";
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+    return (n / 1024 / 1024).toFixed(1) + " MB";
+  }
+
+  // 没有参数：配置前也显示，新用户最需要先知道哪些数据会上云
+  function buildScope() {
+    const box = el("div", "sync-scope");
+    if (!syncReady() || !root.Sync.scope) {
+      box.hidden = true;
+      return box;
+    }
+    box.append(el("div", "sync-scope-head", "会同步哪些数据"));
+    const body = el("div", "sync-scope-body", "正在读取…");
+    box.append(body);
+    fillScope(body);
+    return box;
+  }
+
+  async function fillScope(body) {
+    try {
+      if (!scopeCache.data || Date.now() - scopeCache.at > SCOPE_TTL) {
+        scopeCache = { at: Date.now(), data: await root.Sync.scope() };
+      }
+      const items = (scopeCache.data && scopeCache.data.items) || [];
+      body.textContent = "";
+      if (!items.length) {
+        body.append(el("p", "sync-scope-hint muted", "这台设备上还没读到可同步的数据。"));
+        return;
+      }
+      const list = el("div", "sync-scope-list");
+      items.forEach((item) => list.append(scopeRow(item)));
+      body.append(list);
+      body.append(el("p", "sync-scope-hint muted",
+        "只有这几类会上云，且都是在本机加密之后才上传。收藏的附件与截图（files/、screenshot/）与收藏清单、"
+        + "记谱的音量设置、剪贴板历史、产品目录、局域网收到的文件、API Key 和本机路径都不在内。"));
+    } catch (err) {
+      body.textContent = "同步范围读取失败：" + ((err && err.message) || "未知错误");
+    }
+  }
+
+  function scopeRow(item) {
+    const row = el("div", "sync-scope-item" + (item.pending ? " is-pending" : ""));
+    row.append(el("span", "sync-dot " + (item.pending ? "is-dirty" : (item.exists ? "is-ok" : "is-off"))));
+    const name = el("span", "sync-scope-name");
+    name.append(el("span", null, item.label));
+    name.append(el("span", "sync-scope-path muted", item.path));
+    row.append(name);
+    row.append(el("span", "sync-scope-status", scopeStatus(item)));
+    return row;
+  }
+
+  function scopeStatus(item) {
+    if (item.pending) return item.pendingCount ? item.pendingCount + " 篇待推送" : "待推送";
+    if (!item.exists) return "本机没有";
+    if (item.count) return item.count + " 篇 · " + formatBytes(item.bytes);
+    return "已同步 · " + formatBytes(item.bytes);
+  }
+
   /* ===== 渲染 ===== */
 
   function buildHead(status) {
@@ -322,10 +388,21 @@
       const site = document.createElement("input");
       site.type = "text";
       site.id = "wb-sync-site";
+      // 这框要的是网址，不是账号名，明确标成不需要自动填充；
+      // Chrome / Edge 常无视 autocomplete=off，把上次填过的环境 ID 塞进来，
+      // 所以渲染后再兜一次：不是网址就清掉，免得当成「手机访问地址」生成二维码。
       site.autocomplete = "off";
+      site.setAttribute("data-form-type", "other");
+      site.setAttribute("data-lpignore", "true");
+      site.name = "wb-sync-site-url";
       site.placeholder = "https://xxx.tcloudbaseapp.com";
+      site.value = "";
       siteField.append(site);
       form.append(siteField);
+      // 延迟一拍再清：浏览器自动填充往往发生在 DOM 就绪之后
+      setTimeout(() => {
+        if (site.isConnected && site.value && !/^https?:\/\//i.test(site.value.trim())) site.value = "";
+      }, 80);
     }
 
     const pwField = el("label", "sync-field");
@@ -355,7 +432,10 @@
     primary.id = "wb-sync-go";
     primary.textContent = mode === "setup" ? "开启同步" : "解锁并同步";
     primary.disabled = busy;
-    row.append(primary);
+    // ready 模式不渲染密码框（见 build()），这个按钮却照旧渲染，
+    // 点下去只能取到空密码，unlock() 必然回「同步密码不对」——而这时候其实早就解锁了。
+    // 只有「未配置」和「已配置但本页未解锁」这两种状态才需要它。
+    if (mode !== "ready") row.append(primary);
 
     if (mode === "ready") {
       const now = document.createElement("button");
@@ -463,6 +543,8 @@
 
     if (note) section.append(el("p", "sync-note is-" + noteKind, note));
 
+    section.append(buildScope());
+
     const conflicts = buildConflicts();
     if (conflicts) section.append(conflicts);
 
@@ -555,7 +637,9 @@
   function presetEnv() {
     try {
       const param = new URLSearchParams(location.search).get("sync");
-      if (param && param.trim()) return param.trim();
+      // ?sync=1 是托盘菜单「打开同步状态」的开关，不是环境 ID，别回填
+      const value = param ? param.trim() : "";
+      if (value && value !== "1") return value;
     } catch (err) {
       /* 地址栏没带参数 */
     }
@@ -606,8 +690,9 @@
     container = node;
     if (!listening && syncReady()) {
       root.Sync.onChange(() => {
-        // 同步跑完状态就变了，健康度得重新取一次
+        // 同步跑完状态就变了，健康度和同步范围都得重新取一次
         healthCache = { at: 0, data: null };
+        scopeCache = { at: 0, data: null };
         paint();
       });
       listening = true;

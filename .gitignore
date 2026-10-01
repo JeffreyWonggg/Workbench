@@ -26,6 +26,8 @@ scripts/workbench-host.exe
 scripts/workbench-host.exe.bak
 scripts/workbench-host.prev.exe
 *.pdb
+# 换版时留在 js/vendor/ 的旧第三方库备份（几百 KB，需要时重新下载即可）
+*.bak.js
 
 # ===== 编辑器 / 系统 =====
 .vscode/
