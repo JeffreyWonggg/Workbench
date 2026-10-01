@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>记谱</title>
+  <meta name="color-scheme" content="dark light">
+  <link rel="preload" href="fonts/inter-latin-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/jetbrains-mono-latin-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="css/chart.css">
+  <script>try{document.documentElement.dataset.theme=localStorage.getItem("wb-theme")||"light"}catch(e){document.documentElement.dataset.theme="light"}</script>
+</head>
+<body>
+  <div id="shell">
+    <aside id="sidebar"></aside>
+    <main id="main">
+      <div id="gate" hidden></div>
+      <div id="content" hidden>
+        <header class="page-head">
+          <div>
+            <p class="kicker">记谱</p>
+            <h1>吉他和弦谱</h1>
+            <p class="sub" id="chart-count"></p>
+          </div>
+          <div class="row-actions">
+            <button type="button" id="chart-favorites" class="btn">擅长和弦</button>
+            <button type="button" id="chart-add" class="btn primary">新增歌曲</button>
+          </div>
+        </header>
+
+        <div class="filters">
+          <div class="chart-search">
+            <svg class="ico" aria-hidden="true"><use href="#i-search"></use></svg>
+            <input id="chart-search" type="search" placeholder="搜索歌名、调或谱面内容…" aria-label="搜索歌曲" autocomplete="off">
+          </div>
+          <div id="chart-keys" class="chips"></div>
+          <div id="chart-sort" class="chips"></div>
+        </div>
+
+        <div id="chart-list" class="chart-grid"></div>
+      </div>
+    </main>
+  </div>
+
+  <dialog id="chart-editor" class="code-dialog chart-dialog">
+    <form id="chart-form">
+      <h2 id="chart-editor-title">新增歌曲</h2>
+      <p class="sub">和弦行写在歌词行上方，用空格对齐；也支持「[C]歌词」这类内联写法和粘贴清洗。</p>
+      <div class="form-grid">
+        <label>
+          <span>歌名</span>
+          <input id="chart-title" type="text" placeholder="例如：晴天" autocomplete="off" required>
+        </label>
+        <label>
+          <span>调</span>
+          <select id="chart-key"></select>
+        </label>
+        <label>
+          <span>变调夹</span>
+          <input id="chart-capo" type="number" min="0" max="12" step="1" value="0">
+        </label>
+      </div>
+
+      <div class="chart-toolbar">
+        <button type="button" id="chart-paste" class="btn">粘贴清洗</button>
+        <button type="button" id="chart-format" class="btn">对齐格式化</button>
+        <button type="button" id="chart-recommend" class="btn">推荐调</button>
+        <span class="chart-tool-sep"></span>
+        <span class="muted">试听</span>
+        <span class="seg" id="chart-preview-mode">
+          <button type="button" class="seg-btn on" data-mode="block">块和弦</button>
+          <button type="button" class="seg-btn" data-mode="arpeggio">琶音</button>
+        </span>
+        <label class="chart-volume">
+          <span class="muted">音量</span>
+          <input id="chart-volume" type="range" min="0" max="100" step="5" value="80">
+        </label>
+      </div>
+
+      <div class="chart-edit-grid">
+        <div class="chart-edit-main">
+          <textarea id="chart-content" rows="16" spellcheck="false"
+            placeholder="[主歌]&#10;C        G&#10;故事的小黄花 从出生那年就飘着&#10;&#10;[副歌]&#10;Am       F&#10;刮风这天 我试过握着你手"></textarea>
+          <div id="chart-suggest" class="chart-suggest" hidden></div>
+        </div>
+        <div class="chart-edit-side">
+          <div class="card-head"><h2>和弦插入</h2><span class="muted" id="chart-chord-hint"></span></div>
+          <div id="chart-chords" class="chips chart-chord-chips"></div>
+          <div class="card-head chart-head-gap"><h2>谱面预览</h2>
+            <span class="muted">点和弦可试听</span>
+          </div>
+          <div id="chart-preview" class="chart-sheet chart-sheet-preview"></div>
+        </div>
+      </div>
+
+      <p id="chart-error" class="vault-error" hidden></p>
+      <div class="dialog-actions">
+        <span class="dialog-spacer"></span>
+        <button type="button" id="chart-cancel" class="btn">取消</button>
+        <button type="submit" id="chart-save" class="btn primary">保存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="chart-view" class="code-dialog chart-dialog">
+    <h2 id="chart-view-title"></h2>
+    <p class="sub" id="chart-view-meta"></p>
+    <div id="chart-sheet" class="chart-sheet"></div>
+    <div class="dialog-actions">
+      <button type="button" id="chart-view-transpose" class="btn">转调</button>
+      <button type="button" id="chart-view-txt" class="btn">导出 TXT</button>
+      <button type="button" id="chart-view-copy" class="btn">复制谱面</button>
+      <button type="button" id="chart-view-print" class="btn">打印 / PDF</button>
+      <span class="dialog-spacer"></span>
+      <button type="button" id="chart-view-close" class="btn primary">关闭</button>
+    </div>
+  </dialog>
+
+  <dialog id="chart-transpose" class="code-dialog chart-dialog">
+    <form id="chart-transpose-form">
+      <h2>转调</h2>
+      <p class="sub" id="chart-transpose-sub"></p>
+      <div class="form-grid">
+        <label>
+          <span>目标调</span>
+          <select id="chart-transpose-key"></select>
+        </label>
+        <label>
+          <span>移动半音</span>
+          <input id="chart-transpose-steps" type="text" readonly>
+        </label>
+      </div>
+      <div class="card-head"><h2>推荐调</h2><span class="muted">按黑键最少、擅长和弦排序</span></div>
+      <div id="chart-transpose-recommend" class="chart-recommend"></div>
+      <div class="dialog-actions">
+        <span class="dialog-spacer"></span>
+        <button type="button" id="chart-transpose-cancel" class="btn">取消</button>
+        <button type="button" id="chart-transpose-saveas" class="btn">应用并另存</button>
+        <button type="submit" id="chart-transpose-apply" class="btn primary">应用</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="chart-favorites-dialog" class="code-dialog">
+    <form id="chart-favorites-form">
+      <h2>擅长和弦</h2>
+      <p class="sub">一行一个，例如 C、Am、G7。推荐调时会优先挑这些和弦用得多的调。</p>
+      <label>
+        <span>和弦列表</span>
+        <textarea id="chart-favorites-text" rows="8" placeholder="C&#10;Am&#10;F&#10;G"></textarea>
+      </label>
+      <label class="chart-weight">
+        <span>推荐权重（0 = 只看黑键，1 = 只看擅长和弦）</span>
+        <input id="chart-favorites-weight" type="range" min="0" max="100" step="5" value="0">
+      </label>
+      <div class="dialog-actions">
+        <span class="dialog-spacer"></span>
+        <button type="button" id="chart-favorites-cancel" class="btn">取消</button>
+        <button type="submit" id="chart-favorites-save" class="btn primary">保存</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="chart-del-dialog" class="code-dialog">
+    <form id="chart-del-form">
+      <h2 id="chart-del-title">删除歌曲</h2>
+      <p id="chart-del-text" class="sub"></p>
+      <div class="dialog-actions">
+        <span class="dialog-spacer"></span>
+        <button type="button" id="chart-del-cancel" class="btn">取消</button>
+        <button type="submit" id="chart-del-ok" class="btn danger">删除</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="js/storage.js"></script>
+  <script src="js/model.js"></script>
+  <script src="js/nav.js"></script>
+  <script src="js/vault-crypto.js"></script>
+  <script src="js/sync-crypto.js"></script>
+  <script src="js/sync-core.js"></script>
+  <script src="js/sync-cloudbase.js"></script>
+  <script src="js/sync-ui.js"></script>
+  <script src="js/chart-core.js"></script>
+  <script src="js/chart-text.js"></script>
+  <script src="js/chart-suggest.js"></script>
+  <script src="js/chart-audio.js"></script>
+  <script src="js/chart.js"></script>
+</body>
+</html>
