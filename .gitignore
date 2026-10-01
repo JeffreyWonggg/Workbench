@@ -10,6 +10,8 @@ lan/
 clipboard-history.json
 # 本机记录的自建产品目录
 catalog.db
+# 扫盘生成的路径索引快照（含产品实际路径，随时可重新扫描）
+catalog-index.json
 
 # ===== 密钥（绝对不要提交）=====
 js/openrouter.local.js

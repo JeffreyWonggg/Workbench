@@ -1579,6 +1579,111 @@ input:focus, select:focus, textarea:focus, button:focus-visible {
 
 .catalog-card > .empty { padding: 8px 18px 22px; }
 
+/* 扫盘路径那一块：整行一个输入框，留白跟卡片里其它行对齐
+   （.form-grid 默认是两列，这里只有一个，得显式占满，不然只占左半边） */
+.scan-roots-grid {
+  grid-template-columns: 1fr;
+  padding: 0 var(--space-5) var(--space-3);
+}
+
+.scan-actions { padding: 0 var(--space-5) var(--space-4); }
+
+/* 扫盘结果的可视化：概览三数 → 规格分布（可展开）→ SN 明细分页 */
+.scan-overview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: 0 var(--space-5) var(--space-4);
+}
+
+.scan-stats { display: flex; flex-wrap: wrap; gap: var(--space-8); }
+
+.scan-stat { display: flex; flex-direction: column; }
+
+.scan-stat b { font-size: var(--text-xl); line-height: 1.2; }
+
+.scan-stat span { font-size: var(--text-xs); color: var(--muted); }
+
+.scan-roots-stat { display: flex; flex-direction: column; gap: 2px; }
+
+.scan-root-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+/* 一个都没扫到的根目录多半是路径填错了，标红提示 */
+.scan-root-row.is-empty { color: var(--danger); }
+
+.scan-root-path { overflow-wrap: anywhere; }
+
+.scan-specs { display: flex; flex-direction: column; }
+
+.scan-tree-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  width: 100%;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: none;
+  padding: 6px 0;
+  text-align: left;
+  font-size: var(--text-md);
+}
+
+.scan-tree-row:hover { color: var(--accent); }
+
+.scan-tree-children {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: 0 0 var(--space-3);
+}
+
+.scan-tree-leaf {
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font-size: var(--text-sm);
+}
+
+.scan-tree-leaf:hover { border-color: var(--accent); color: var(--accent); }
+
+.scan-warn {
+  margin: 0 var(--space-5) var(--space-3);
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.scan-detail { padding: 0 var(--space-5) var(--space-4); }
+
+.scan-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-bottom: var(--space-2);
+}
+
+.scan-pager {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
 .library-root {
   margin: 0;
   padding: 12px 14px 0;

@@ -15,6 +15,7 @@ using System.Drawing.Text;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
 
@@ -184,28 +185,92 @@ sealed class WorkbenchHost {
         return;
       }
 
-      if (string.Equals(request.HttpMethod, "POST", StringComparison.OrdinalIgnoreCase) &&
-          string.Equals(request.Url.AbsolutePath, "/catalog/save", StringComparison.OrdinalIgnoreCase)) {
-        if (!ownOrigin) {
-          Send(response, 403, "text/plain", "forbidden");
+      // 产品目录扫盘：根目录配置 / 触发扫描 / 进度 / 查询
+      if (string.Equals(request.Url.AbsolutePath, "/catalog/roots", StringComparison.OrdinalIgnoreCase)) {
+        if (string.Equals(request.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase)) {
+          if (!string.IsNullOrEmpty(origin) && !ownOrigin) {
+            Send(response, 403, "text/plain", "forbidden");
+            return;
+          }
+          Send(response, 200, "application/json", CatalogRootsJson());
           return;
         }
-        string saveError = SaveCatalog(request);
-        if (saveError != null) {
-          Send(response, 400, "text/plain", saveError);
+        if (string.Equals(request.HttpMethod, "POST", StringComparison.OrdinalIgnoreCase)) {
+          if (!ownOrigin) {
+            Send(response, 403, "text/plain", "forbidden");
+            return;
+          }
+          string rootsBody;
+          using (StreamReader reader = new StreamReader(request.InputStream, Encoding.UTF8)) {
+            rootsBody = reader.ReadToEnd();
+          }
+          Send(response, 200, "application/json", SaveCatalogRootsJson(rootsBody));
           return;
         }
-        Send(response, 204, "text/plain", "");
-        return;
       }
 
       if (string.Equals(request.HttpMethod, "POST", StringComparison.OrdinalIgnoreCase) &&
-          string.Equals(request.Url.AbsolutePath, "/sync-db", StringComparison.OrdinalIgnoreCase)) {
+          string.Equals(request.Url.AbsolutePath, "/catalog/scan", StringComparison.OrdinalIgnoreCase)) {
         if (!ownOrigin) {
           Send(response, 403, "text/plain", "forbidden");
           return;
         }
-        SyncIndex(response);
+        StartCatalogScan();
+        Send(response, 200, "application/json", "{\"ok\":true}");
+        return;
+      }
+
+      if (string.Equals(request.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase) &&
+          string.Equals(request.Url.AbsolutePath, "/catalog/status", StringComparison.OrdinalIgnoreCase)) {
+        if (!string.IsNullOrEmpty(origin) && !ownOrigin) {
+          Send(response, 403, "text/plain", "forbidden");
+          return;
+        }
+        Send(response, 200, "application/json", CatalogStatusJson());
+        return;
+      }
+
+      if (string.Equals(request.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase) &&
+          string.Equals(request.Url.AbsolutePath, "/catalog/find", StringComparison.OrdinalIgnoreCase)) {
+        if (!string.IsNullOrEmpty(origin) && !ownOrigin) {
+          Send(response, 403, "text/plain", "forbidden");
+          return;
+        }
+        Send(response, 200, "application/json", CatalogFindJson(QueryValue(request, "sn")));
+        return;
+      }
+
+      if (string.Equals(request.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase) &&
+          string.Equals(request.Url.AbsolutePath, "/catalog/search", StringComparison.OrdinalIgnoreCase)) {
+        if (!string.IsNullOrEmpty(origin) && !ownOrigin) {
+          Send(response, 403, "text/plain", "forbidden");
+          return;
+        }
+        Send(response, 200, "application/json", CatalogSearchJson(QueryValue(request, "q"), 20));
+        return;
+      }
+
+      // 扫盘结果的概览与分布
+      if (string.Equals(request.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase) &&
+          string.Equals(request.Url.AbsolutePath, "/catalog/stats", StringComparison.OrdinalIgnoreCase)) {
+        if (!string.IsNullOrEmpty(origin) && !ownOrigin) {
+          Send(response, 403, "text/plain", "forbidden");
+          return;
+        }
+        Send(response, 200, "application/json", CatalogStatsJson());
+        return;
+      }
+
+      // 明细：level=pn 是某个规格下的 PN 列表，否则是 SN 分页
+      if (string.Equals(request.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase) &&
+          string.Equals(request.Url.AbsolutePath, "/catalog/list", StringComparison.OrdinalIgnoreCase)) {
+        if (!string.IsNullOrEmpty(origin) && !ownOrigin) {
+          Send(response, 403, "text/plain", "forbidden");
+          return;
+        }
+        Send(response, 200, "application/json", CatalogListJson(
+          QueryValue(request, "spec"), QueryValue(request, "pn"), QueryValue(request, "level"),
+          QueryValue(request, "offset"), QueryValue(request, "limit")));
         return;
       }
 
@@ -830,7 +895,6 @@ sealed class WorkbenchHost {
 
   const string UpdateVersionExe = @"C:\Git Repository\Update_Version_Software\x64\Release\Update_Version_Software.exe";
   const string TemplateToolExe = @"C:\Tool\TemplateTool\TemplateMakingTool.Views.WPF.exe";
-  const string NasDb = @"\\ZH-mfS-SRV.OPLINK.COM.CN\Passive\EDFATemp\42233\otdr_index.db";
   static readonly Encoding IniEncoding = Encoding.GetEncoding(936);
   static readonly Encoding RawEncoding = Encoding.GetEncoding(28591);
 
@@ -2840,139 +2904,48 @@ sealed class WorkbenchHost {
     return text.ToString();
   }
 
-  static string SaveCatalog(HttpListenerRequest request) {
-    if (request.ContentLength64 > 20L * 1024L * 1024L) return "数据库过大";
-    byte[] bytes;
-    using (MemoryStream memory = new MemoryStream()) {
-      byte[] buffer = new byte[8192];
-      int read;
-      while ((read = request.InputStream.Read(buffer, 0, buffer.Length)) > 0) {
-        memory.Write(buffer, 0, read);
-        if (memory.Length > 20L * 1024L * 1024L) return "数据库过大";
-      }
-      bytes = memory.ToArray();
-    }
-    if (bytes.Length < 16 || Encoding.ASCII.GetString(bytes, 0, 15) != "SQLite format 3") return "不是 SQLite 数据库";
-    string local = Path.Combine(Root, "catalog.db");
-    string tmp = local + ".tmp";
-    try {
-      File.WriteAllBytes(tmp, bytes);
-      if (File.Exists(local)) File.Replace(tmp, local, null);
-      else File.Move(tmp, local);
-      return null;
-    } catch (Exception ex) {
-      try {
-        if (File.Exists(tmp)) File.Delete(tmp);
-      } catch (Exception) { }
-      return ex.Message;
-    }
-  }
-
-  static void SyncIndex(HttpListenerResponse response) {
-    string local = Path.Combine(Root, "otdr_index.db");
-    bool localExists = File.Exists(local);
-    bool nasExists = false;
-    try {
-      nasExists = File.Exists(NasDb);
-    } catch (Exception) {
-      nasExists = false;
-    }
-    if (!nasExists) {
-      Send(response, 200, "application/json",
-        "{\"updated\":false,\"status\":\"unavailable\",\"local\":" + (localExists ? "true" : "false") + "}");
-      return;
-    }
-
-    DateTime nasTime = File.GetLastWriteTime(NasDb);
-    string nasText = nasTime.ToString("yyyy-MM-dd HH:mm:ss");
-    if (localExists) {
-      DateTime localTime = File.GetLastWriteTime(local);
-      if (SameSecond(nasTime, localTime)) {
-        Send(response, 200, "application/json",
-          "{\"updated\":false,\"status\":\"same\",\"local\":true,\"nasTime\":\"" + nasText +
-          "\",\"localTime\":\"" + localTime.ToString("yyyy-MM-dd HH:mm:ss") + "\"}");
-        return;
-      }
-    }
-
-    string tmp = local + ".tmp";
-    try {
-      File.Copy(NasDb, tmp, true);
-      if (File.Exists(local)) File.Replace(tmp, local, null);
-      else File.Move(tmp, local);
-      CopySidecar(NasDb, local, "-wal");
-      CopySidecar(NasDb, local, "-shm");
-      Checkpoint(local);
-      File.SetLastWriteTime(local, nasTime);
-      Send(response, 200, "application/json",
-        "{\"updated\":true,\"status\":\"copied\",\"local\":true,\"nasTime\":\"" + nasText +
-        "\",\"localTime\":\"" + nasText + "\"}");
-    } catch (Exception ex) {
-      try {
-        if (File.Exists(tmp)) File.Delete(tmp);
-      } catch (Exception) { }
-      Send(response, 500, "application/json",
-        "{\"updated\":false,\"status\":\"error\",\"local\":" + (File.Exists(local) ? "true" : "false") +
-        ",\"message\":\"" + JsonEscape(ex.Message) + "\"}");
-    }
-  }
-
-  static bool SameSecond(DateTime left, DateTime right) {
-    return left.ToUniversalTime().Ticks / TimeSpan.TicksPerSecond ==
-      right.ToUniversalTime().Ticks / TimeSpan.TicksPerSecond;
-  }
-
-  static void CopySidecar(string nasDb, string localDb, string suffix) {
-    string src = nasDb + suffix;
-    string dst = localDb + suffix;
-    bool srcExists = false;
-    try {
-      srcExists = File.Exists(src);
-    } catch (Exception) {
-      srcExists = false;
-    }
-    if (!srcExists) {
-      try {
-        if (File.Exists(dst)) File.Delete(dst);
-      } catch (Exception) { }
-      return;
-    }
-    string tmp = dst + ".tmp";
-    File.Copy(src, tmp, true);
-    DateTime stamp = File.GetLastWriteTime(src);
-    if (File.Exists(dst)) File.Replace(tmp, dst, null);
-    else File.Move(tmp, dst);
-    File.SetLastWriteTime(dst, stamp);
-  }
-
-  static void Checkpoint(string local) {
-    if (!File.Exists(local + "-wal")) return;
-    try {
-      ProcessStartInfo start = new ProcessStartInfo();
-      start.FileName = "python";
-      start.Arguments = "-c \"import sqlite3; c=sqlite3.connect(r'" + local +
-        "'); c.execute('PRAGMA wal_checkpoint(TRUNCATE)'); c.close()\"";
-      start.UseShellExecute = false;
-      start.CreateNoWindow = true;
-      Process process = Process.Start(start);
-      if (process != null) process.WaitForExit(20000);
-    } catch (Exception) { }
-  }
-
   static string JsonEscape(string value) {
     if (value == null) return "";
     return value.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\r", "").Replace("\n", " ");
+  }
+
+  [DllImport("user32.dll")] static extern IntPtr FindWindow(string className, string windowName);
+  [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hWnd, int command);
+  [DllImport("user32.dll")] static extern bool IsIconic(IntPtr hWnd);
+
+  const int SW_RESTORE = 9;
+
+  // explorer 是单实例，新窗口由已有进程代开，不会马上冒出新句柄，所以要等一下。
+  // 找到之后交给现成的 ForceForeground：服务是后台进程，抢不到前台窗口。
+  static void BringExplorerToFront(IntPtr before) {
+    try {
+      IntPtr target = IntPtr.Zero;
+      for (int i = 0; i < 30 && target == IntPtr.Zero; i++) {
+        Thread.Sleep(100);
+        IntPtr now = FindWindow("CabinetWClass", null);
+        if (now != IntPtr.Zero && now != before) target = now;
+      }
+      // 等不到新窗口（比如这个文件夹本来就已经开着）就用最上面那个
+      if (target == IntPtr.Zero) target = FindWindow("CabinetWClass", null);
+      if (target == IntPtr.Zero) return;
+      if (IsIconic(target)) ShowWindow(target, SW_RESTORE);
+      ForceForeground(target);
+    } catch (Exception) {
+    }
   }
 
   static bool OpenFolder(string path) {
     bool drive = path.Length >= 3 && char.IsLetter(path[0]) && path[1] == ':' && path[2] == '\\';
     bool unc = path.StartsWith("\\\\") && path.IndexOf('\\', 2) > 2;
     if ((!drive && !unc) || path.IndexOfAny(new char[] { '\r', '\n', '"' }) >= 0) return false;
+    // 先记住现在的资源管理器窗口，好跟新开出来的那个区分开
+    IntPtr before = FindWindow("CabinetWClass", null);
     ProcessStartInfo start = new ProcessStartInfo();
     start.FileName = Environment.GetEnvironmentVariable("SystemRoot") + "\\explorer.exe";
     start.Arguments = "\"" + path + "\"";
     start.UseShellExecute = true;
     Process.Start(start);
+    BringExplorerToFront(before);
     return true;
   }
 
@@ -4742,5 +4715,428 @@ sealed class WorkbenchHost {
       Process.Start(new ProcessStartInfo(full));
     } catch (Exception) {
     }
+  }
+
+  /* ===== 产品目录扫盘 =====
+     路径是固定的三级：根目录\spec\PN\SN。根目录有几个指定的 UNC 共享，同一个产品可能落在
+     其中任意一个下面，只能扫出来才知道在哪，没法靠规则推。
+     扫盘放在服务端：浏览器碰不到 UNC 路径，而且索引常驻内存之后查询是 O(1)。
+     性能上的三个讲究：
+       1. 只枚举、不 stat——SMB 上多取一次属性就是多一次网络往返；
+       2. 并行度给 8——SMB 服务器端自己会排队，并发开大了反而慢；
+       3. 每个根目录的失败单独记，别让一个共享掉线毁掉整轮。 */
+
+  sealed class CatalogEntry {
+    public string Sn = "";
+    public string Pn = "";
+    public string Spec = "";
+    public string Root = "";
+    public string Path = "";
+  }
+
+  static readonly object CatalogLock = new object();
+  static readonly string CatalogIndexPath = Path.Combine(Root, "catalog-index.json");
+  // SN 不区分大小写，跟前端 catalog 表的 COLLATE NOCASE 一致
+  static Dictionary<string, CatalogEntry> catalogIndex =
+    new Dictionary<string, CatalogEntry>(StringComparer.OrdinalIgnoreCase);
+  static int catalogScanned = 0;
+  static bool catalogRunning = false;
+  static bool catalogLoaded = false;
+  static DateTime catalogDeadline = DateTime.MaxValue;
+  static string catalogStartedAt = "";
+  static string catalogFinishedAt = "";
+  static List<string> catalogErrors = new List<string>();
+  static string catalogLoadError = "";
+  const int CatalogTimeoutMinutes = 15;
+
+  // 上次扫描的快照：启动时先加载它，秒开；真正的刷新靠重新扫一遍。
+  // 文件是每行一条 JSON，逐行解析——整份一次性反序列化会在内存里立起一棵巨大的对象树，
+  // 几万条时又慢又占内存（而且 JavaScriptSerializer 默认只收 2MB，超了直接抛异常）。
+  static void EnsureCatalogLoaded() {
+    if (catalogLoaded) return;
+    lock (CatalogLock) {
+      if (catalogLoaded) return;
+      catalogLoaded = true;
+      try {
+        if (!File.Exists(CatalogIndexPath)) return;
+        JavaScriptSerializer serializer = new JavaScriptSerializer();
+        serializer.MaxJsonLength = int.MaxValue;
+        Dictionary<string, CatalogEntry> map =
+          new Dictionary<string, CatalogEntry>(StringComparer.OrdinalIgnoreCase);
+        int bad = 0;
+        foreach (string line in File.ReadLines(CatalogIndexPath, Encoding.UTF8)) {
+          if (string.IsNullOrEmpty(line) || line.Trim().Length == 0) continue;
+          Dictionary<string, object> item = null;
+          try {
+            item = serializer.Deserialize<Dictionary<string, object>>(line);
+          } catch (Exception) {
+            bad += 1;
+            continue;
+          }
+          if (item == null) continue;
+          CatalogEntry entry = new CatalogEntry();
+          entry.Sn = ValueOf(item, "sn");
+          entry.Pn = ValueOf(item, "pn");
+          entry.Spec = ValueOf(item, "spec");
+          entry.Root = ValueOf(item, "root");
+          entry.Path = ValueOf(item, "path");
+          if (entry.Sn.Length == 0) continue;
+          map[entry.Sn] = entry;
+        }
+        catalogIndex = map;
+        if (bad > 0) catalogLoadError = "快照里有 " + bad + " 行没读出来";
+      } catch (Exception ex) {
+        // 不静默：读不出来要说一声，否则界面上只会看到「0 条」，像是没扫过
+        catalogLoadError = "索引快照没有读出来：" + ex.Message;
+      }
+    }
+  }
+
+  // 每行一条地写，跟 EnsureCatalogLoaded 的逐行读配套：
+  // 不用在内存里先攒出一个几万元素的数组再一次性序列化
+  static void SaveCatalogIndex(Dictionary<string, CatalogEntry> map) {
+    try {
+      JavaScriptSerializer serializer = new JavaScriptSerializer();
+      serializer.MaxJsonLength = int.MaxValue;
+      StringBuilder text = new StringBuilder();
+      foreach (CatalogEntry entry in map.Values) {
+        Dictionary<string, object> item = new Dictionary<string, object>();
+        item["sn"] = entry.Sn;
+        item["pn"] = entry.Pn;
+        item["spec"] = entry.Spec;
+        item["root"] = entry.Root;
+        item["path"] = entry.Path;
+        text.Append(serializer.Serialize(item));
+        text.Append('\n');
+      }
+      File.WriteAllText(CatalogIndexPath, text.ToString(), Encoding.UTF8);
+    } catch (Exception) {
+    }
+  }
+
+  // 根目录清单存在 workbench.config.json 的 catalogRoots，跟其它本机配置放一起
+  static List<string> CatalogRoots() {
+    List<string> roots = new List<string>();
+    Dictionary<string, object> config = ReadConfig();
+    if (!config.ContainsKey("catalogRoots") || config["catalogRoots"] == null) return roots;
+    IEnumerable list = config["catalogRoots"] as IEnumerable;
+    if (list == null) return roots;
+    foreach (object item in list) {
+      string text = Convert.ToString(item);
+      if (text != null && text.Trim().Length > 0) roots.Add(text.Trim());
+    }
+    return roots;
+  }
+
+  static void SaveCatalogRoots(List<string> roots) {
+    Dictionary<string, object> config = ReadConfig();
+    config["catalogRoots"] = roots;
+    File.WriteAllText(ConfigPath, new JavaScriptSerializer().Serialize(config), Encoding.UTF8);
+  }
+
+  static void StartCatalogScan() {
+    lock (CatalogLock) {
+      if (catalogRunning) return;
+      catalogRunning = true;
+      catalogScanned = 0;
+      catalogStartedAt = DateTime.Now.ToString("s");
+      catalogFinishedAt = "";
+      catalogErrors = new List<string>();
+      catalogDeadline = DateTime.Now.AddMinutes(CatalogTimeoutMinutes);
+    }
+    List<string> roots = CatalogRoots();
+    Task.Factory.StartNew(() => RunCatalogScan(roots), TaskCreationOptions.LongRunning);
+  }
+
+  static void RunCatalogScan(List<string> roots) {
+    Dictionary<string, CatalogEntry> map = new Dictionary<string, CatalogEntry>(StringComparer.OrdinalIgnoreCase);
+    List<string> errors = new List<string>();
+    try {
+      ParallelOptions options = new ParallelOptions { MaxDegreeOfParallelism = 8 };
+      Parallel.ForEach(roots, options, (root) => {
+        try {
+          ScanCatalogRoot(root, map, options);
+        } catch (Exception ex) {
+          lock (errors) errors.Add(root + "：" + ex.Message);
+        }
+      });
+    } catch (Exception ex) {
+      lock (errors) errors.Add(ex.Message);
+    }
+    lock (CatalogLock) {
+      catalogIndex = map;
+      catalogErrors = errors;
+      catalogRunning = false;
+      catalogFinishedAt = DateTime.Now.ToString("s");
+    }
+    SaveCatalogIndex(map);
+  }
+
+  // 三级：根目录\spec\PN\SN。用 EnumerateDirectories 的字符串版本，它走 FindFirstFile、
+  // 顺手就把名字带回来了；别换成 DirectoryInfo，那会多取一次属性。
+  static void ScanCatalogRoot(string root, Dictionary<string, CatalogEntry> map, ParallelOptions options) {
+    List<string> specs = EnumerateCatalogDirs(root);
+    if (specs == null) throw new Exception("读不到这个根目录（共享不可达或没权限）");
+    Parallel.ForEach(specs, options, (specDir, state) => {
+      // SMB 挂起时同步 IO 是取消不掉的，只能到点停手，把已经扫到的留下
+      if (DateTime.Now > catalogDeadline) {
+        state.Stop();
+        return;
+      }
+      List<string> pns = EnumerateCatalogDirs(specDir);
+      if (pns == null) return;
+      foreach (string pnDir in pns) {
+        List<string> sns = EnumerateCatalogDirs(pnDir);
+        if (sns == null) continue;
+        foreach (string snDir in sns) {
+          CatalogEntry entry = new CatalogEntry();
+          entry.Sn = CatalogName(snDir);
+          entry.Pn = CatalogName(pnDir);
+          entry.Spec = CatalogName(specDir);
+          entry.Root = root;
+          entry.Path = snDir;
+          if (entry.Sn.Length == 0) continue;
+          lock (map) {
+            map[entry.Sn] = entry;
+          }
+          Interlocked.Increment(ref catalogScanned);
+        }
+      }
+    });
+  }
+
+  static List<string> EnumerateCatalogDirs(string path) {
+    try {
+      return new List<string>(Directory.EnumerateDirectories(path));
+    } catch (Exception) {
+      return null;
+    }
+  }
+
+  static string CatalogName(string path) {
+    if (string.IsNullOrEmpty(path)) return "";
+    int index = path.LastIndexOf('\\');
+    if (index < 0) index = path.LastIndexOf('/');
+    return index < 0 ? path : path.Substring(index + 1);
+  }
+
+  static string CatalogRootsJson() {
+    Dictionary<string, object> result = new Dictionary<string, object>();
+    result["roots"] = CatalogRoots();
+    return new JavaScriptSerializer().Serialize(result);
+  }
+
+  static string SaveCatalogRootsJson(string body) {
+    List<string> roots = new List<string>();
+    try {
+      Dictionary<string, object> request =
+        new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(body == null ? "" : body);
+      IEnumerable list = request != null && request.ContainsKey("roots") ? request["roots"] as IEnumerable : null;
+      if (list != null) {
+        foreach (object item in list) {
+          string text = Convert.ToString(item);
+          if (text != null && text.Trim().Length > 0) roots.Add(text.Trim());
+        }
+      }
+    } catch (Exception) {
+    }
+    try {
+      SaveCatalogRoots(roots);
+    } catch (Exception ex) {
+      Dictionary<string, object> bad = new Dictionary<string, object>();
+      bad["ok"] = false;
+      bad["error"] = "配置没写进去：" + ex.Message;
+      return new JavaScriptSerializer().Serialize(bad);
+    }
+    Dictionary<string, object> result = new Dictionary<string, object>();
+    result["ok"] = true;
+    result["roots"] = roots;
+    return new JavaScriptSerializer().Serialize(result);
+  }
+
+  static string CatalogStatusJson() {
+    EnsureCatalogLoaded();
+    Dictionary<string, object> result = new Dictionary<string, object>();
+    lock (CatalogLock) {
+      result["running"] = catalogRunning;
+      result["scanned"] = catalogScanned;
+      result["total"] = catalogIndex.Count;
+      result["startedAt"] = catalogStartedAt;
+      result["finishedAt"] = catalogFinishedAt;
+      result["errors"] = catalogErrors;
+      result["loadError"] = catalogLoadError;
+    }
+    result["roots"] = CatalogRoots();
+    return new JavaScriptSerializer().Serialize(result);
+  }
+
+  static string CatalogFindJson(string sn) {
+    EnsureCatalogLoaded();
+    Dictionary<string, object> result = new Dictionary<string, object>();
+    CatalogEntry entry = null;
+    lock (CatalogLock) {
+      if (!string.IsNullOrEmpty(sn) && catalogIndex.TryGetValue(sn.Trim(), out entry)) {
+        result["found"] = true;
+        result["sn"] = entry.Sn;
+        result["pn"] = entry.Pn;
+        result["spec"] = entry.Spec;
+        result["root"] = entry.Root;
+        result["path"] = entry.Path;
+      } else {
+        result["found"] = false;
+      }
+    }
+    return new JavaScriptSerializer().Serialize(result);
+  }
+
+  // 模糊匹配 SN 或 PN。几万条全表扫一次也就几毫秒，只在用户敲回车时触发，够用
+  static string CatalogSearchJson(string query, int limit) {
+    EnsureCatalogLoaded();
+    List<Dictionary<string, object>> list = new List<Dictionary<string, object>>();
+    string needle = query == null ? "" : query.Trim().ToLowerInvariant();
+    if (needle.Length > 0) {
+      lock (CatalogLock) {
+        foreach (CatalogEntry entry in catalogIndex.Values) {
+          if (list.Count >= limit) break;
+          if (entry.Sn.ToLowerInvariant().IndexOf(needle) < 0
+            && entry.Pn.ToLowerInvariant().IndexOf(needle) < 0) continue;
+          Dictionary<string, object> item = new Dictionary<string, object>();
+          item["sn"] = entry.Sn;
+          item["pn"] = entry.Pn;
+          item["spec"] = entry.Spec;
+          item["path"] = entry.Path;
+          list.Add(item);
+        }
+      }
+    }
+    Dictionary<string, object> result = new Dictionary<string, object>();
+    result["items"] = list;
+    return new JavaScriptSerializer().Serialize(result);
+  }
+
+  // 概览与分布。聚合在服务端算好再给前端，几万条遍历一次也就几十毫秒。
+  // 绝不能把整个索引丢给浏览器去渲染——那等于把刚挪走的 26MB 索引库又请回来。
+  static string CatalogStatsJson() {
+    EnsureCatalogLoaded();
+    Dictionary<string, int> byRoot = new Dictionary<string, int>();
+    Dictionary<string, int> specSn = new Dictionary<string, int>();
+    Dictionary<string, HashSet<string>> specPn = new Dictionary<string, HashSet<string>>();
+    HashSet<string> allPn = new HashSet<string>();
+    int total = 0;
+    string scannedAt;
+    string loadError;
+    List<string> errors;
+    lock (CatalogLock) {
+      total = catalogIndex.Count;
+      foreach (CatalogEntry entry in catalogIndex.Values) {
+        if (entry.Root.Length > 0) {
+          int count;
+          byRoot.TryGetValue(entry.Root, out count);
+          byRoot[entry.Root] = count + 1;
+        }
+        int sn;
+        specSn.TryGetValue(entry.Spec, out sn);
+        specSn[entry.Spec] = sn + 1;
+        HashSet<string> set;
+        if (!specPn.TryGetValue(entry.Spec, out set)) {
+          set = new HashSet<string>();
+          specPn[entry.Spec] = set;
+        }
+        if (entry.Pn.Length > 0) {
+          set.Add(entry.Pn);
+          allPn.Add(entry.Spec + "|" + entry.Pn);
+        }
+      }
+      scannedAt = catalogFinishedAt;
+      loadError = catalogLoadError;
+      errors = catalogErrors;
+    }
+    List<Dictionary<string, object>> roots = new List<Dictionary<string, object>>();
+    foreach (KeyValuePair<string, int> pair in byRoot) {
+      Dictionary<string, object> item = new Dictionary<string, object>();
+      item["root"] = pair.Key;
+      item["count"] = pair.Value;
+      roots.Add(item);
+    }
+    roots.Sort((a, b) => Convert.ToInt32(b["count"]).CompareTo(Convert.ToInt32(a["count"])));
+    List<Dictionary<string, object>> specs = new List<Dictionary<string, object>>();
+    foreach (KeyValuePair<string, int> pair in specSn) {
+      Dictionary<string, object> item = new Dictionary<string, object>();
+      item["spec"] = pair.Key;
+      item["snCount"] = pair.Value;
+      item["pnCount"] = specPn.ContainsKey(pair.Key) ? specPn[pair.Key].Count : 0;
+      specs.Add(item);
+    }
+    specs.Sort((a, b) => StringComparer.OrdinalIgnoreCase.Compare(
+      Convert.ToString(a["spec"]), Convert.ToString(b["spec"])));
+    Dictionary<string, object> result = new Dictionary<string, object>();
+    result["total"] = total;
+    result["specCount"] = specSn.Count;
+    result["pnCount"] = allPn.Count;
+    result["roots"] = roots;
+    result["specs"] = specs;
+    result["scannedAt"] = scannedAt;
+    result["loadError"] = loadError;
+    result["errors"] = errors;
+    return new JavaScriptSerializer().Serialize(result);
+  }
+
+  // 明细：level=pn 给出某个规格下的 PN 及各自条数；否则按 SN 分页
+  static string CatalogListJson(string spec, string pn, string level, string offsetText, string limitText) {
+    EnsureCatalogLoaded();
+    int offset = 0;
+    int limit = 100;
+    int.TryParse(offsetText, out offset);
+    int.TryParse(limitText, out limit);
+    if (limit <= 0) limit = 100;
+    if (limit > 500) limit = 500;
+    if (offset < 0) offset = 0;
+    List<CatalogEntry> matched = new List<CatalogEntry>();
+    lock (CatalogLock) {
+      foreach (CatalogEntry entry in catalogIndex.Values) {
+        if (!string.IsNullOrEmpty(spec)
+          && !string.Equals(entry.Spec, spec, StringComparison.OrdinalIgnoreCase)) continue;
+        if (!string.IsNullOrEmpty(pn)
+          && !string.Equals(entry.Pn, pn, StringComparison.OrdinalIgnoreCase)) continue;
+        matched.Add(entry);
+      }
+    }
+    Dictionary<string, object> result = new Dictionary<string, object>();
+    if (string.Equals(level, "pn", StringComparison.OrdinalIgnoreCase)) {
+      Dictionary<string, int> counts = new Dictionary<string, int>();
+      foreach (CatalogEntry entry in matched) {
+        int count;
+        counts.TryGetValue(entry.Pn, out count);
+        counts[entry.Pn] = count + 1;
+      }
+      List<Dictionary<string, object>> items = new List<Dictionary<string, object>>();
+      foreach (KeyValuePair<string, int> pair in counts) {
+        Dictionary<string, object> item = new Dictionary<string, object>();
+        item["pn"] = pair.Key;
+        item["count"] = pair.Value;
+        items.Add(item);
+      }
+      items.Sort((a, b) => StringComparer.OrdinalIgnoreCase.Compare(
+        Convert.ToString(a["pn"]), Convert.ToString(b["pn"])));
+      result["items"] = items;
+      result["total"] = items.Count;
+      return new JavaScriptSerializer().Serialize(result);
+    }
+    matched.Sort((a, b) => StringComparer.OrdinalIgnoreCase.Compare(a.Sn, b.Sn));
+    List<Dictionary<string, object>> page = new List<Dictionary<string, object>>();
+    for (int i = offset; i < matched.Count && page.Count < limit; i++) {
+      CatalogEntry entry = matched[i];
+      Dictionary<string, object> item = new Dictionary<string, object>();
+      item["sn"] = entry.Sn;
+      item["pn"] = entry.Pn;
+      item["spec"] = entry.Spec;
+      item["path"] = entry.Path;
+      page.Add(item);
+    }
+    result["items"] = page;
+    result["total"] = matched.Count;
+    result["offset"] = offset;
+    result["limit"] = limit;
+    return new JavaScriptSerializer().Serialize(result);
   }
 }

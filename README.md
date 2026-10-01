@@ -32,7 +32,7 @@
 | **收藏** | 把文件或整个文件夹拖进来就存进数据文件夹（本体进 `files/`，截图进 `screenshot/`）；卡片带缩略图预览、搜索、按「文件/截图」筛选、可另存回本机 |
 | **代码** | 本机 git 仓库管理：扫描发现、状态、改动暂存/提交、历史与差异、分支、标签、获取/拉取/推送（含强制推送）、反向提交与硬回滚、发布流水、软件号（明文） |
 | **局域网传文件** | 手机/其它电脑在同一 WiFi 下打开局域网地址即可上传下载（支持整个文件夹、打包下载） |
-| **产品目录查询** | 读取 sqlite 索引库查询产品信息；另有一份只存在本机的自建目录 |
+| **产品目录查询** | 按序列号查产品数据所在的目录：页面里填几个根目录（存在 `workbench.config.json` 的 `catalogRoots`），服务端按 `根目录\spec\PN\SN` 三级扫描、索引常驻内存，查询毫秒级 |
 | **更新软件版本** | 编辑 `UpdateVersion.ini`：改版本、复制条目、发布前预览、一键发布；与「代码」页的标签/发布流水联动 |
 | **回收站** | 软删除的待办/笔记/菜谱在这里恢复或彻底删除（资料库的条目加密存放，只能在资料库页里恢复） |
 | **关于** | 本页所有文字（名称、简介、作者、版本、版权）都读根目录的 **`about.json`**，改完刷新即可 |
@@ -82,7 +82,7 @@
 
 ### 危险操作统一确认
 
-删除、重置、导出、迁出这类操作用的是页面内的毛玻璃弹窗，**全库没有浏览器原生 `confirm()` / `alert()` / `prompt()`**（原生弹窗由系统绘制，和整套界面不是一个观感）。目前统一走 `Nav.ask()` 的有 14 处：回收站（彻底删除待办/笔记/菜谱、清空回收站）、资料库（重置、导出明文、彻底删除条目、批量迁出软件号）、快捷方式（删除卡片）、收藏（删除文件）、记账（删除记录）、更新软件版本（有未保存修改时发布）、产品目录查询（删除自建记录）、局域网传文件（删除文件/文件夹）；云同步面板的确认与冲突查看也复用同一套。周报、菜谱、记谱用的是各页自己的同款对话框（`<dialog>` + 同一套样式）。
+删除、重置、导出、迁出这类操作用的是页面内的毛玻璃弹窗，**全库没有浏览器原生 `confirm()` / `alert()` / `prompt()`**（原生弹窗由系统绘制，和整套界面不是一个观感）。目前统一走 `Nav.ask()` 的有 13 处：回收站（彻底删除待办/笔记/菜谱、清空回收站）、资料库（重置、导出明文、彻底删除条目、批量迁出软件号）、快捷方式（删除卡片）、收藏（删除文件）、记账（删除记录）、更新软件版本（有未保存修改时发布）、局域网传文件（删除文件/文件夹）；云同步面板的确认与冲突查看也复用同一套。周报、菜谱、记谱用的是各页自己的同款对话框（`<dialog>` + 同一套样式）。
 
 行为与原生一致：**确定 → 执行；取消 / Esc / 点弹窗外的遮罩 → 放弃**。危险操作用红色按钮，并且**默认焦点落在「取消」**上，避免一路回车把东西删了；删除类操作大多还能在 Toast 里点「撤销」恢复。
 
@@ -109,7 +109,7 @@
 | 数据读写 | **File System Access API**：用户自己选数据文件夹，句柄存 IndexedDB，数据以纯 JSON 文件落地（`meta.json`、`todos.json`、`notes.json`、`reports.json`、`notes/`、`software.json`…） |
 | 加密 | WebCrypto：PBKDF2-SHA256 派生密钥 + AES-GCM 加密资料库（`vault.json`），每次写入自动留 `vault.backup.json` |
 | 本地服务 | **C# / .NET Framework**（`scripts/workbench-host.cs`，用 `csc` 编译成单个 `workbench-host.exe`），`HttpListener` 提供 HTTP 接口，WinForms 弹原生文件/文件夹选择框 |
-| 数据库 | `sql.js`（SQLite 编译成 WebAssembly）在浏览器里只读查询 `.db` |
+| 产品目录索引 | 由本地服务扫盘建立：按 `根目录\spec\PN\SN` 三级扫描，索引常驻服务端内存、快照存 `catalog-index.json`；浏览器不再读写任何 `.db` |
 | 二维码 | 自带 `js/vendor/qrcode.js` |
 | AI | 兼容 OpenAI 协议的 `chat/completions` 接口（DeepSeek / 火山方舟），密钥放本机 `js/openrouter.local.js`；首页余额卡片另查官方 `GET /user/balance` |
 
@@ -166,7 +166,7 @@ Workbench/
 │  ├─ chart-text.js       谱面文本层：清洗、内联和弦展开、解析、按列对齐
 │  ├─ chart-suggest.js    推荐调与和弦候选（选调建议、调内和弦、补全排序）
 │  ├─ chart-audio.js      试听用的 WebAudio 合成音（无外部依赖）
-│  └─ vendor/qrcode.js、sql-wasm.js、cloudbase.full.js（按需加载）
+│  └─ vendor/qrcode.js、cloudbase.full.js（按需加载）
 ├─ scripts/
 │  ├─ workbench-host.cs   本地服务源码
 │  ├─ build-host.ps1      编译 + 重启脚本（失败自动保留原 exe）
@@ -248,7 +248,7 @@ window.ARK_API_KEY = "你的火山方舟 Key";
 
 | 同步 | 不同步 |
 |---|---|
-| 待办 `todos.json`、周报 `reports.json`、笔记索引 `notes.json` + 每篇正文 `notes/*.md`、记账 `ledger.json`、菜谱 `recipes.json`、软件号 `software.json`、加密资料库 `vault.json`、记谱 `charts.json`、记谱偏好 `chart-settings.json`（只取擅长和弦与推荐调权重） | 剪贴板历史、产品目录 `catalog.db`、OTDR 索引、局域网收到的文件、`workbench.config.json`、API Key |
+| 待办 `todos.json`、周报 `reports.json`、笔记索引 `notes.json` + 每篇正文 `notes/*.md`、记账 `ledger.json`、菜谱 `recipes.json`、软件号 `software.json`、加密资料库 `vault.json`、记谱 `charts.json`、记谱偏好 `chart-settings.json`（只取擅长和弦与推荐调权重） | 剪贴板历史、OTDR 索引、局域网收到的文件、`workbench.config.json`、API Key |
 | 项目清单：只取 `meta.json` 里的项目名，工具路径、git 根目录这些**本机路径不外传** | DeepSeek 余额快照 `deepseek.json`（每台设备各查各的，同步过去只会互相覆盖、反复产生冲突副本）、记谱的音量（擅长和弦与推荐调权重会同步，音量是设备属性，各台设备各留各的）、收藏 `files.json`（它指向 `files/` 里的二进制本体，那些不上云，同步过去只会得到一堆打不开的卡片）、资料库主密码、明文缓存 `wb-vault-records`、旧版明文资料库 `resources.json`（建议直接删掉） |
 
 这张表不是死的：面板里「会同步哪些数据」区块会按这台设备**实际有什么**列出来，标上各自大小和待推送篇数，改动前后一眼能看出哪类还没上云。同一个区块也把「不上云」写在末尾，不用回来翻文档。
@@ -320,4 +320,4 @@ powershell -ExecutionPolicy Bypass -File scripts\build-host.ps1
 - 「DeepSeek」的余额和按天快照存在数据文件夹的 `deepseek.json`（明文可读可改，一天一条，只留最近 62 天）
 - **没开云同步时**，除 AI 润色（把周报文本发给你自己配置的模型接口）和首页余额查询（只带 API Key 问一次余额）外，**没有任何数据离开本机**
 - **开了云同步后**，同步范围内的文件会**在本地加密后**传到你自己开通的腾讯云 CloudBase 环境，解密只在本机进行，云端只存密文；剪贴板历史、API Key、主密码、明文缓存、本机路径类配置都不在同步范围内（详见「云同步」一章）
-- 本仓库已排除：`notes/`（数据）、`vault*.json`、`lan/`、`clipboard-history.json`、`catalog.db`、`otdr_index.db`、`js/openrouter.local.js`（密钥）、`workbench.config.json`（本机路径）
+- 本仓库已排除：`notes/`（数据）、`vault*.json`、`lan/`、`clipboard-history.json`、`catalog-index.json`（扫盘索引）、`js/openrouter.local.js`（密钥）、`workbench.config.json`（本机路径）
