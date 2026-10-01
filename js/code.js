@@ -12,7 +12,7 @@
     pendingTab: "",
     pendingSoftware: "",
     selected: new Set(),
-    log: { skip: 0, limit: 30, items: [], hasMore: false },
+    log: { skip: 0, limit: 15, items: [], hasMore: false },
     software: [],
     softwareSearch: "",
     showDeleted: false,
@@ -23,7 +23,7 @@
   };
 
   // 改动列表每页条数（和历史列表保持一致）
-  const CHANGE_PAGE_SIZE = 30;
+  const CHANGE_PAGE_SIZE = 15;
 
   // 危险操作的确认文案：写清楚会发生什么
   const OP_META = {
@@ -590,7 +590,7 @@
     state.current = path;
     state.selected.clear();
     state.changesPage = 1;
-    state.log = { skip: 0, limit: 30, items: [], hasMore: false };
+    state.log = { skip: 0, limit: 15, items: [], hasMore: false };
     $("diff-view").hidden = true;
     renderRepos();
     renderRepoHead();
