@@ -2720,6 +2720,15 @@ h2 { font-size: var(--text-lg); }
 
 .project-tile .muted { font-size: var(--text-sm); }
 
+/* 布局模式：拖动磁贴调整项目先后顺序（顺序写进 meta.json，会跟着云同步走）。
+   .card-tools / .card-grip 默认藏着，和首页卡片那一套是同一组样式，这里只管编辑态。 */
+.project-overview.is-editing .project-tile { cursor: grab; }
+.project-overview.is-editing .project-tile .card-head { align-items: center; }
+/* 多了一个 grip 之后，摘要会被 space-between 挤到标题旁边；这里让它继续贴右边 */
+.project-overview.is-editing .project-tile .card-head > .muted { margin-left: auto; }
+.project-overview.is-editing .card-tools { display: inline-flex; }
+.project-tile.dragging { opacity: 0.35; }
+
 .project-tile-stats {
   display: flex;
   flex-wrap: wrap;

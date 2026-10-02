@@ -19,6 +19,7 @@
     software = Workbench.activeItems(await Workbench.loadSoftware());
     repos = Workbench.gitConfig().repos;
 
+    bindLayout();
     const wanted = new URLSearchParams(location.search).get("name");
     if (wanted && projectNames().includes(wanted)) renderDetail(wanted);
     else renderOverview();
@@ -70,7 +71,11 @@
   function renderOverview() {
     document.getElementById("project-overview").hidden = false;
     document.getElementById("project-detail").hidden = true;
-    document.getElementById("project-actions").hidden = true;
+    // 总览只留「布局」；「在待办里打开 / 去记笔记」是针对某个项目的，进详情才出现
+    document.getElementById("project-actions").hidden = false;
+    document.getElementById("project-layout").hidden = false;
+    document.getElementById("project-todo-link").hidden = true;
+    document.getElementById("project-note-link").hidden = true;
     document.getElementById("project-kicker").textContent = "全部项目";
     document.getElementById("project-title").textContent = "项目";
 
@@ -115,8 +120,126 @@
       );
 
       tile.append(head, line, statsRow);
+      setupTile(tile, name);
       box.append(tile);
     });
+  }
+
+  /* ===== 总览布局：拖动磁贴调整项目先后顺序 =====
+     顺序写进 meta.json 的 projects —— 它是**数据**不是本机偏好：
+     待办/笔记等页面的项目下拉框、这边的总览都按这个顺序来，换台设备也该一致，
+     所以让它跟着云同步走（而不是像侧栏排序、首页卡片那样存 localStorage）。 */
+
+  let layoutEditing = false;
+  let dragTile = null;
+
+  function tileList() {
+    return Array.prototype.slice.call(document.querySelectorAll("#project-overview .project-tile"));
+  }
+
+  // 只绑一次：磁贴每次重绘都会重建，但按钮和容器不会
+  function bindLayout() {
+    const button = document.getElementById("project-layout");
+    const box = document.getElementById("project-overview");
+    if (!button || !box) return;
+    button.addEventListener("click", () => setLayoutEditing(!layoutEditing));
+    box.addEventListener("dragover", onTileDragOver);
+    box.addEventListener("drop", (event) => event.preventDefault());
+  }
+
+  function setLayoutEditing(value) {
+    layoutEditing = value;
+    document.getElementById("project-overview").classList.toggle("is-editing", layoutEditing);
+    const button = document.getElementById("project-layout");
+    button.textContent = layoutEditing ? "完成" : "布局";
+    button.setAttribute("aria-pressed", layoutEditing ? "true" : "false");
+    tileList().forEach((tile) => { tile.draggable = layoutEditing; });
+    if (layoutEditing) Nav.toast("拖动卡片调整项目顺序，拖完点「完成」");
+  }
+
+  function setupTile(tile, name) {
+    tile.dataset.project = name;
+    tile.draggable = layoutEditing;
+    // 布局模式下点卡片是"想拖它"，别跳进详情页
+    tile.addEventListener("click", (event) => {
+      if (layoutEditing) event.preventDefault();
+    });
+    tile.addEventListener("dragstart", (event) => {
+      if (!layoutEditing) {
+        event.preventDefault();
+        return;
+      }
+      dragTile = tile;
+      tile.classList.add("dragging");
+      event.dataTransfer.effectAllowed = "move";
+      try {
+        event.dataTransfer.setData("text/plain", name);
+      } catch (err) {
+        // 某些浏览器对 setData 有额外限制，拖拽本身不依赖它
+      }
+    });
+    tile.addEventListener("dragend", () => {
+      tile.classList.remove("dragging");
+      dragTile = null;
+      // 拖完以真实 DOM 顺序为准，别再自己算一遍
+      commitProjectOrder();
+    });
+
+    const head = tile.querySelector(".card-head");
+    if (head && !head.querySelector(".card-tools")) {
+      const tools = document.createElement("div");
+      tools.className = "card-tools";
+      const grip = document.createElement("span");
+      grip.className = "card-grip";
+      grip.title = "拖动排序";
+      grip.setAttribute("aria-hidden", "true");
+      grip.append(Nav.icon("grip"));
+      tools.append(grip);
+      head.append(tools);
+    }
+  }
+
+  // 边拖边排：指针压到哪张磁贴的哪半边，就把被拖的那张插过去
+  function onTileDragOver(event) {
+    if (!layoutEditing || !dragTile) return;
+    event.preventDefault();
+    const tiles = tileList().filter((tile) => tile !== dragTile);
+    let index = tiles.length;
+    for (let i = 0; i < tiles.length; i += 1) {
+      const rect = tiles[i].getBoundingClientRect();
+      const inRow = event.clientY >= rect.top && event.clientY <= rect.bottom;
+      if (inRow && event.clientX < rect.left + rect.width / 2) {
+        index = i;
+        break;
+      }
+      if (!inRow && event.clientY < rect.top + rect.height / 2) {
+        index = i;
+        break;
+      }
+    }
+    const box = document.getElementById("project-overview");
+    if (index >= tiles.length) {
+      if (box.lastElementChild !== dragTile) box.append(dragTile);
+      return;
+    }
+    if (tiles[index].previousElementSibling !== dragTile) box.insertBefore(dragTile, tiles[index]);
+  }
+
+  async function commitProjectOrder() {
+    const names = tileList().map((tile) => tile.dataset.project);
+    const previous = Workbench.meta.projects;
+    if (names.length !== previous.length) return;
+    if (names.every((name, index) => name === previous[index])) return;   // 没变就不写盘
+    Workbench.meta.projects = names;
+    try {
+      await Workbench.saveMeta();
+      Nav.toast("项目顺序已保存");
+    } catch (err) {
+      // 写不进去就把内存里的顺序改回去，免得页面和磁盘不一致
+      Workbench.meta.projects = previous;
+      renderOverview();
+      Nav.toast("顺序没存上：" + (err && err.message ? err.message : "未知错误"));
+    }
   }
 
   function stat(value, label) {
@@ -136,7 +259,11 @@
   function renderDetail(name) {
     document.getElementById("project-overview").hidden = true;
     document.getElementById("project-detail").hidden = false;
+    // 详情页没有磁贴可排，收掉「布局」，换成属于这个项目的两个跳转
     document.getElementById("project-actions").hidden = false;
+    document.getElementById("project-layout").hidden = true;
+    document.getElementById("project-todo-link").hidden = false;
+    document.getElementById("project-note-link").hidden = false;
     document.getElementById("project-kicker").textContent = "项目";
     document.getElementById("project-title").textContent = name;
     document.getElementById("project-todo-link").href = "todo.html?project=" + encodeURIComponent(name);

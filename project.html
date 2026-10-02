@@ -24,9 +24,11 @@
             <p class="kicker" id="project-kicker">项目</p>
             <h1 id="project-title">项目</h1>
           </div>
-          <div class="row-actions" id="project-actions" hidden>
-            <a class="btn" id="project-todo-link" href="todo.html">在待办里打开</a>
-            <a class="btn" id="project-note-link" href="notes.html">去记笔记</a>
+          <!-- 总览只显示「布局」，详情只显示那两个跳转链接：三种控件的显隐由 project.js 管 -->
+          <div class="row-actions" id="project-actions">
+            <button type="button" id="project-layout" class="btn" aria-pressed="false" aria-label="调整项目卡片顺序">布局</button>
+            <a class="btn" id="project-todo-link" href="todo.html" hidden>在待办里打开</a>
+            <a class="btn" id="project-note-link" href="notes.html" hidden>去记笔记</a>
           </div>
         </header>
 
