@@ -64,8 +64,10 @@
     writeIdList(HIDDEN_KEY, Array.from(ids));
   }
 
-  // 离开本机 exe 就活不了的页面：手机上不给入口，点了只会报错
-  const DESKTOP_ONLY = ["code", "version", "sn", "clipboard", "lan"];
+  // 离开本机 exe 就活不了的页面：手机上不给入口，点了只会报错。
+  // 「局域网传文件」不在其中：它的接口不做本机校验，远程打开照样能浏览/上传/下载，
+  // 页面本身也只在本机才显示「访问地址 + 二维码」那一块（见 lan.js）。别再加回去。
+  const DESKTOP_ONLY = ["code", "version", "sn", "clipboard"];
 
   // 本机地址 = 能用到 workbench-host.exe；通过托管域名或局域网 IP 访问都算「远程」
   function isLocalHost() {

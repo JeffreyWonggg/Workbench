@@ -2183,6 +2183,24 @@ h2 { font-size: var(--text-lg); }
 
 .lan-progress { margin-top: var(--space-3); min-height: 1.2em; font-size: var(--text-sm); color: var(--muted); }
 
+/* 上传进度：一条细进度条，下面是说明行（文件 / 百分比 / 已传-总量 / 速度 / 剩余） */
+.lan-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.lan-bar i {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.15s linear;
+}
+
+.lan-progress-text { margin-top: var(--space-2); }
+
 .lan-files { display: flex; flex-direction: column; }
 
 .lan-file {

@@ -136,6 +136,128 @@
     return String(rel || "").split(/[\\/]/).some((part) => part.charCodeAt(0) === 46);
   }
 
+  /* ===== 上传进度 =====
+     用 XHR 而不是 fetch：fetch 没有上传进度事件（浏览器不给请求体的进度回调），
+     只有 XHR 的 upload.onprogress 能拿到逐块字节数。 */
+
+  // 单个文件上传，onProgress 收到的是这个文件已发出的字节数
+  function putFile(name, file, onProgress) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/lan/put?name=" + encodeURIComponent(name));
+      xhr.upload.onprogress = (event) => onProgress(event.loaded || 0);
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          // 很小的文件可能一个进度事件都不来，补报一次，免得进度条永远差一截
+          onProgress(file.size || 0);
+          resolve();
+          return;
+        }
+        reject(new Error(xhr.responseText || ("发送失败（" + xhr.status + "）")));
+      };
+      xhr.onerror = () => reject(new Error("连接中断"));
+      xhr.send(file);
+    });
+  }
+
+  // 速度采样：两个采样点间隔太近就沿用上一次的值（否则每个进度事件都算一次会乱跳），
+  // 够一个窗口了再算瞬时速度，并用 0.6/0.4 的权重平滑一下
+  const SPEED_WINDOW_MS = 700;
+
+  function speedSampler() {
+    let lastAt = 0;
+    let lastBytes = 0;
+    let smooth = 0;
+    return function sample(now, bytes) {
+      if (!lastAt) {
+        lastAt = now;
+        lastBytes = bytes;
+        return 0;
+      }
+      const elapsed = now - lastAt;
+      if (elapsed < SPEED_WINDOW_MS) return smooth;
+      const instant = (bytes - lastBytes) * 1000 / elapsed;   // 字节/秒
+      lastAt = now;
+      lastBytes = bytes;
+      smooth = smooth > 0 ? smooth * 0.6 + instant * 0.4 : instant;
+      return smooth;
+    };
+  }
+
+  function formatSpeed(bytesPerSecond) {
+    return bytesPerSecond > 0 ? formatSize(bytesPerSecond) + "/s" : "";
+  }
+
+  // 剩余时间只给个大概，所以进位到秒/分/小时
+  function formatDuration(seconds) {
+    const sec = Math.max(1, Math.round(seconds));
+    if (sec < 60) return sec + " 秒";
+    const min = Math.floor(sec / 60);
+    if (min < 60) return min + " 分 " + (sec % 60) + " 秒";
+    return Math.floor(min / 60) + " 小时 " + (min % 60) + " 分";
+  }
+
+  // 进度条 + 一行说明：正在传哪个 / 百分比 / 已传-总量 / 速度 / 预计剩余。
+  // 整批一起算（不是每个文件一条），一次拖一堆文件时也能看出总体到哪了。
+  function progressReporter(box, total) {
+    box.innerHTML = "";
+    const bar = document.createElement("div");
+    bar.className = "lan-bar";
+    const fill = document.createElement("i");
+    bar.append(fill);
+    const text = document.createElement("div");
+    text.className = "lan-progress-text";
+    box.append(bar, text);
+
+    const sample = speedSampler();
+    let finishedBytes = 0;   // 已传完的文件累计
+    let currentBytes = 0;    // 当前文件已传
+    let label = "";
+    let speed = 0;
+
+    function paint() {
+      const sent = Math.min(finishedBytes + currentBytes, total);
+      const percent = total > 0 ? Math.min(100, Math.round(sent * 100 / total)) : 100;
+      fill.style.width = percent + "%";
+      const parts = [];
+      if (label) parts.push(label);
+      parts.push(percent + "%");
+      parts.push(formatSize(sent) + " / " + formatSize(total));
+      if (speed > 0) {
+        parts.push(formatSpeed(speed));
+        const rest = (total - sent) / speed;
+        if (rest > 0 && rest < 24 * 3600) parts.push("还剩约 " + formatDuration(rest));
+      }
+      text.textContent = parts.join(" · ");
+    }
+
+    return {
+      start(name, index, count) {
+        label = "正在发送 " + name + (count > 1 ? `（${index}/${count}）` : "");
+        paint();
+      },
+      bytes(loaded) {
+        currentBytes = loaded;
+        speed = sample(Date.now(), Math.min(finishedBytes + currentBytes, total));
+        paint();
+      },
+      doneFile() {
+        finishedBytes += currentBytes;
+        currentBytes = 0;
+        paint();
+      },
+      failFile() {
+        // 这一份没传成，它已发的字节不算进总进度；速度读数留着，下次采样自然修正
+        currentBytes = 0;
+        paint();
+      },
+      finish(summary) {
+        box.innerHTML = "";
+        box.textContent = summary;
+      }
+    };
+  }
+
   async function upload(list) {
     const progress = document.getElementById("lan-progress");
     if (!list.length) return;
@@ -148,23 +270,22 @@
       return;
     }
 
+    const totalBytes = visible.reduce((sum, item) => sum + (item.file.size || 0), 0);
+    const reporter = progressReporter(progress, totalBytes);
     let done = 0;
     let failed = 0;
     let firstError = "";
     for (let i = 0; i < visible.length; i++) {
       const item = visible[i];
       const name = joinRel(state.path, item.rel);
-      const step = visible.length > 1 ? `（${i + 1}/${visible.length}）` : "";
-      progress.textContent = `正在发送 ${name}${step} · ${formatSize(item.file.size)}`;
+      reporter.start(name, i + 1, visible.length);
       try {
-        const response = await fetch("/lan/put?name=" + encodeURIComponent(name), {
-          method: "POST",
-          body: item.file
-        });
-        if (!response.ok) throw new Error((await response.text()) || "发送失败");
+        await putFile(name, item.file, (loaded) => reporter.bytes(loaded));
+        reporter.doneFile();
         done += 1;
       } catch (err) {
         // 单个失败不中止整批：文件夹上传常有零星坏名字，把其余的传完再汇总
+        reporter.failFile();
         failed += 1;
         if (!firstError) firstError = err && err.message ? err.message : "未知错误";
       }
@@ -174,7 +295,7 @@
     const notes = [];
     if (failed) notes.push(`${failed} 个失败（${firstError}）`);
     if (skipped) notes.push(`跳过 ${skipped} 个隐藏项`);
-    progress.textContent = summary + (notes.length ? " · " + notes.join("，") : "");
+    reporter.finish(summary + (notes.length ? " · " + notes.join("，") : ""));
     if (failed) {
       Nav.toast(`发送失败 ${failed} 个` + (skipped ? `，跳过 ${skipped} 个隐藏项` : ""));
     } else {
