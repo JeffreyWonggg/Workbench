@@ -5,7 +5,7 @@
      浏览器预览 + 另存到本机，而不是调本机程序。 */
 
   const MAX_BYTES = 200 * 1024 * 1024;   // 单个文件上限
-  const THUMB_LIMIT = 60;                // 最多做这么多张缩略图，免得一次读爆内存
+  const THUMB_LIMIT = 60;                // 最多做这么多张缩略图
 
   const state = {
     items: [],
