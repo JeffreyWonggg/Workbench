@@ -13,8 +13,16 @@ catalog.db
 # 扫盘生成的路径索引快照（含产品实际路径，随时可重新扫描）
 catalog-index.json
 
+# 出行路况的后端定时采集（本机服务自己采的那份）：
+# commute.local.json 是同步过去的线路（含起终点，通常就是住址），
+# commute-spool.json 是服务端在页面没开时攒下的样本。
+commute.local.json
+commute-spool.json
+
 # ===== 密钥（绝对不要提交）=====
 js/openrouter.local.js
+# 百度地图 AK：只被本机服务（scripts/workbench-host.cs）读取，页面拿不到
+baidu.local.json
 
 # ===== 本机配置与缓存（换机器会自己重建）=====
 workbench.config.json

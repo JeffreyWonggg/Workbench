@@ -1,55 +1,31 @@
 (function (root) {
   /* 「DeepSeek」卡片
-     余额：官方接口 GET /user/balance（需 Authorization: Bearer <API Key>）。
-           实测该接口回显 access-control-allow-origin，浏览器可以直连，
-           不必经过本地服务，也不用重编译 workbench-host.exe。
-     当天 / 当月消费：官方只提供 Chat/Responses/FIM/模型列表/余额/文件，
-           **没有用量或账单接口**，所以只能拿余额快照做减法：
-             当天消费 = 当天最早一次记录到的余额 − 当前余额
-             当月消费 = 当月最早一次记录到的余额 − 当前余额
-           每次打开首页或点「刷新」记一次，一天一条（留当天首次和末次）。
-           因此这两个数字只覆盖「开始记录之后」的时段；中途充值会让数字偏小。
-     记录落在数据文件夹的 deepseek.json（明文，可读可改）。 */
+     只显示官方接口 GET /user/balance 直接给回来的数字：
+       充值余额 topped_up_balance、总额 total_balance、赠金 granted_balance。
+     消费（当天 / 当月）这里不再显示。官方没有用量或账单接口，那两个数只能拿余额快照做减法，
+     而减法遇到充值就会算出负数、被 Math.max(0) 压成 0，当天要等到花超充值额才重新有数，
+     当月更是整月少算——算不准不如不算。要看消费请点「说明」里的平台用量页链接。
+     余额缓存落在数据文件夹的 deepseek.json（明文，可读可改），断网时显示上次的数字。 */
 
   const ENDPOINT = "https://api.deepseek.com/user/balance";
   const FILE = "deepseek.json";
   const FRESH_MS = 5 * 60 * 1000;
-  const KEEP_DAYS = 62;
 
   let store = null;
   let lastError = "";
   let busy = false;
 
   function emptyStore() {
-    return { version: 2, currency: "CNY", last: null, days: [] };
+    return { version: 3, currency: "CNY", last: null };
   }
 
-  function normalizeDay(raw) {
-    if (!raw || typeof raw !== "object") return null;
-    const day = String(raw.d || "");
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
-    const first = Number(raw.first);
-    const last = Number(raw.last);
-    if (!Number.isFinite(first) || !Number.isFinite(last)) return null;
-    return {
-      d: day,
-      firstAt: String(raw.firstAt || ""),
-      first: first,
-      lastAt: String(raw.lastAt || ""),
-      last: last
-    };
-  }
-
+  // 旧版本（v2）的 days 是给消费计算用的，直接丢掉；下次写盘时文件就跟着瘦下来
   function normalize(raw) {
     const base = emptyStore();
     if (!raw || typeof raw !== "object") return base;
     const last = raw.last && typeof raw.last === "object" ? raw.last : null;
-    const days = (Array.isArray(raw.days) ? raw.days : [])
-      .map(normalizeDay)
-      .filter(Boolean)
-      .sort((a, b) => (a.d < b.d ? -1 : a.d > b.d ? 1 : 0));
     return {
-      version: 2,
+      version: 3,
       currency: typeof raw.currency === "string" && raw.currency ? raw.currency : base.currency,
       last: last ? {
         at: String(last.at || ""),
@@ -58,8 +34,7 @@
         granted: String(last.granted == null ? "" : last.granted),
         toppedUp: String(last.toppedUp == null ? "" : last.toppedUp),
         isAvailable: last.isAvailable !== false
-      } : null,
-      days: days.slice(-KEEP_DAYS)
+      } : null
     };
   }
 
@@ -85,75 +60,6 @@
     if (Number.isNaN(date.getTime())) return "";
     const pad = (n) => String(n).padStart(2, "0");
     return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
-  }
-
-  const pad2 = (n) => String(n).padStart(2, "0");
-
-  function dayKey(date) {
-    return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
-  }
-
-  function monthKey(date) {
-    return dayKey(date).slice(0, 7);
-  }
-
-  // "2026-09-30" → "9月30日"
-  function dayText(key) {
-    const parts = String(key).split("-");
-    return `${Number(parts[1])}月${Number(parts[2])}日`;
-  }
-
-  /* ===== 快照：一天一条，留当天首次与末次余额 ===== */
-
-  function recordSample(latest) {
-    const total = Number(latest.total);
-    if (!Number.isFinite(total)) return;
-    const key = dayKey(new Date(latest.at));
-    const row = store.days.find((item) => item.d === key);
-    if (row) {
-      row.lastAt = latest.at;
-      row.last = total;
-    } else {
-      store.days.push({ d: key, firstAt: latest.at, first: total, lastAt: latest.at, last: total });
-    }
-    store.days.sort((a, b) => (a.d < b.d ? -1 : a.d > b.d ? 1 : 0));
-    const cutoff = dayKey(new Date(Date.now() - (KEEP_DAYS - 1) * 86400000));
-    store.days = store.days.filter((item) => item.d >= cutoff);
-  }
-
-  function currentTotal() {
-    const value = store.last ? Number(store.last.total) : NaN;
-    return Number.isFinite(value) ? value : null;
-  }
-
-  // 用某段时间最早那条快照做基准，减去当前余额
-  function spentSince(rows) {
-    const current = currentTotal();
-    if (!rows.length || current == null) return null;
-    return { value: Math.max(0, rows[0].first - current), from: rows[0] };
-  }
-
-  function todaySpent() {
-    const key = dayKey(new Date());
-    return spentSince(store.days.filter((item) => item.d === key));
-  }
-
-  function monthSpent() {
-    const key = monthKey(new Date());
-    return spentSince(store.days.filter((item) => item.d.slice(0, 7) === key));
-  }
-
-  function sinceText(row) {
-    if (row.d === dayKey(new Date())) {
-      const clock = clockText(row.firstAt);
-      return clock ? `自今天 ${clock} 起` : "自今天起";
-    }
-    return `自 ${dayText(row.d)} 起`;
-  }
-
-  function monthSinceText(row) {
-    if (row.d === monthKey(new Date()) + "-01") return "自月初起";
-    return sinceText(row);
   }
 
   /* ===== 取数 ===== */
@@ -193,7 +99,6 @@
       const latest = await requestBalance();
       store.currency = latest.currency;
       store.last = latest;
-      recordSample(latest);
       await Workbench.writeJson(FILE, store);
       lastError = "";
       if (manual) Nav.toast("余额已更新");
@@ -214,10 +119,9 @@
     if (button) button.disabled = state;
   }
 
-  function statBox(label, value, hint) {
+  function statBox(label, value) {
     const box = el("div", "usage-stat");
     box.append(el("span", "usage-label", label), el("strong", "usage-value", value));
-    if (hint) box.append(el("span", "usage-hint", hint));
     return box;
   }
 
@@ -238,16 +142,8 @@
     }
 
     const currency = last.currency;
-    const today = todaySpent();
-    const month = monthSpent();
     const stats = el("div", "usage-stats");
     stats.append(statBox("充值余额", money(last.toppedUp, currency)));
-    stats.append(today
-      ? statBox("当天消费", money(today.value, currency), sinceText(today.from))
-      : statBox("当天消费", "—", "等下一次记录"));
-    stats.append(month
-      ? statBox("当月消费", money(month.value, currency), monthSinceText(month.from))
-      : statBox("当月消费", "—", "等下一次记录"));
     body.append(stats);
 
     const foot = el("p", "usage-foot muted");
@@ -286,17 +182,16 @@
     dialog.id = "wb-usage-dialog";
     dialog.className = "code-dialog";
     dialog.innerHTML = [
-      "<h2>DeepSeek 三个数字怎么来的</h2>",
-      '<p class="sub">充值余额、总额、赠金直接来自官方接口 <code>GET /user/balance</code>。</p>',
-      '<p class="sub">官方**没有**用量或账单接口，所以当天 / 当月消费是按余额快照做减法：'
-        + "当天消费 = 当天最早一次记录到的余额 − 当前余额，当月消费同理取当月最早那次。"
-        + "每次打开首页或点「刷新」记一次，一天一条。</p>",
-      '<p class="sub">也就是说这两个数字只覆盖「开始记录之后」的时段：'
-        + "今天是第一次记录，当天消费就得从这次记录的时刻算起；"
-        + "月中才开始记录，当月消费只能从那天算起。中途充值会让数字偏小。</p>",
-      '<p class="sub">快照存在数据文件夹的 <code>deepseek.json</code>（明文，可读可改），只留最近 62 天。</p>',
+      "<h2>DeepSeek 余额怎么来的</h2>",
+      '<p class="sub">充值余额、总额、赠金都直接来自官方接口 <code>GET /user/balance</code>'
+        + "（带 <code>Authorization: Bearer &lt;你的 Key&gt;</code>），浏览器直连，不经过本地服务。</p>",
+      '<p class="sub">这里以前还显示「当天消费 / 当月消费」，已经去掉了：官方没有用量或账单接口，'
+        + "那两个数只能拿余额快照做减法，可一充值就会被算成负数压到 0，"
+        + "当天得等花超充值额才重新有数，当月更是整月少算。算不准不如不算。</p>",
+      '<p class="sub">要看真实消费，用下面这个链接打开官方用量页。</p>',
+      '<p class="sub">余额缓存写在数据文件夹的 <code>deepseek.json</code>（明文，可读可改）。</p>',
       '<div class="dialog-actions">',
-      '  <a class="btn" href="https://platform.deepseek.com/usage" target="_blank" rel="noopener">打开平台用量页核对</a>',
+      '  <a class="btn" href="https://platform.deepseek.com/usage" target="_blank" rel="noopener">打开平台用量页</a>',
       '  <span class="dialog-spacer"></span>',
       '  <button type="button" id="usage-note-close" class="btn primary">知道了</button>',
       "</div>"
@@ -321,16 +216,6 @@
       store = normalize(await Workbench.readJson(FILE, emptyStore()));
     } catch (err) {
       store = emptyStore();
-    }
-    // 一条快照都没有时（第一次用，或从旧版本升上来），先用手上这条余额建基线，
-    // 免得当天 / 当月只显示「—」等下一次刷新。
-    if (!store.days.length && store.last && Number.isFinite(Number(store.last.total))) {
-      recordSample(store.last);
-      try {
-        await Workbench.writeJson(FILE, store);
-      } catch (err) {
-        /* 写不进去也不影响本次显示 */
-      }
     }
     render();
     const age = store.last ? Date.now() - new Date(store.last.at).getTime() : Infinity;

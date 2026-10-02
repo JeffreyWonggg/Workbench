@@ -1305,6 +1305,37 @@ input:focus, select:focus, textarea:focus, button:focus-visible {
 
 .check { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); }
 
+/* 导入 Markdown 弹窗：选项目 + 预览要导入的标题清单 */
+.note-import-field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  color: var(--muted);
+}
+
+.note-import-field select { width: auto; min-width: 160px; max-width: min(320px, 60vw); }
+
+.note-import-list {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--hover);
+  color: var(--ink);
+  font-size: var(--text-sm);
+}
+
+.note-import-list li {
+  padding: 3px 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .editor-pane {
   display: block;
   flex: 1 1 auto;
@@ -2247,8 +2278,6 @@ h2 { font-size: var(--text-lg); }
   font-variant-numeric: tabular-nums;
 }
 
-.usage-hint { color: var(--muted); font-size: 12px; }
-
 .usage-foot { margin: 10px 0 0; font-size: 13px; }
 
 /* ===== 云同步面板（js/sync-ui.js） ===== */
@@ -2464,6 +2493,333 @@ h2 { font-size: var(--text-lg); }
 
 @supports (padding: env(safe-area-inset-bottom)) {
   .side-foot { padding-bottom: env(safe-area-inset-bottom); }
+}
+
+/* ===== 首页「出行路况」（js/baidu.js） =====
+   卡片里只回答"现在走怎么样"：耗时、里程、偏差条、最近 24 小时迷你折线、一句结论。
+   时段统计（24 小时条形图 + 30 天热力格）放进「详情」弹窗，免得首页卡片被撑得太高。 */
+
+/* 独占一整行：首页卡片栅格是 2–3 列自动排的，路况卡挤在其中一个格子里，
+   条形图/热力格会窄到看不出规律。跨满所有列后，不管它被拖到第几位都自成一行 */
+#commute-card { grid-column: 1 / -1; }
+
+.commute-actions { display: flex; gap: var(--space-3); }
+
+.commute-actions .linkish { font-size: 13px; }
+
+.commute-route {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
+.commute-pair { font-weight: 600; overflow-wrap: anywhere; }
+
+.commute-figure {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.commute-figure-main { min-width: 0; }
+
+.commute-value {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 34px;
+  font-weight: 600;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.commute-value span { font-family: inherit; font-size: 13px; font-weight: 500; color: var(--muted); }
+
+.commute-meta { margin: 4px 0 0; font-size: 13px; }
+
+.commute-spark { width: min(180px, 46%); text-align: right; }
+
+.commute-spark svg { display: block; width: 100%; height: 34px; overflow: visible; }
+
+.commute-spark p { margin: 4px 0 0; font-size: 12px; }
+
+.commute-spark-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.commute-spark-dot { fill: var(--accent); }
+
+.commute-delta { margin-top: var(--space-3); }
+
+.commute-delta p { margin: 6px 0 0; font-size: 13px; }
+
+/* 偏差条：中线是基准均值，往右更慢（红）、往左更快（绿） */
+.commute-bar {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.commute-bar::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  background: color-mix(in srgb, var(--muted) 55%, transparent);
+}
+
+.commute-bar-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 999px;
+  transition: left 240ms ease, width 240ms ease, background 240ms ease;
+}
+
+.commute-bar-fill.ok { background: var(--ok); }
+
+.commute-bar-fill.hold { background: var(--hold); }
+
+.commute-bar-fill.danger { background: var(--danger); }
+
+.commute-verdict {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: var(--space-3) 0 0;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.commute-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; }
+
+.commute-dot.ok { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 20%, transparent); }
+
+.commute-dot.hold { background: var(--hold); box-shadow: 0 0 0 3px color-mix(in srgb, var(--hold) 20%, transparent); }
+
+.commute-dot.danger { background: var(--danger); box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 20%, transparent); }
+
+.commute-note { margin: 8px 0 0; font-size: 12px; }
+
+/* 分段明细：默认收起，点开才向百度要一次（完整版接口，返回体比轻量版大得多） */
+.commute-seg { margin-top: var(--space-3); }
+
+.commute-seg-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.commute-seg-head .linkish { font-size: 13px; }
+
+.commute-seg-sum { font-size: 12px; }
+
+.commute-seg-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.commute-seg-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13px;
+}
+
+/* 路名可能很长（「广深高速公路」之类），让它自己截断，别把右边的数字挤走 */
+.commute-seg-road {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.commute-seg-meter {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.commute-seg-note { margin: 6px 0 0; font-size: 12px; }
+
+/* 「详情」弹窗：时段统计 */
+.commute-stats-dialog { width: min(760px, calc(100vw - 32px)); }
+
+.commute-stats { display: flex; flex-direction: column; gap: var(--space-3); }
+
+.commute-stats h3 { margin: 0; font-size: 17px; }
+
+.commute-stats h4 { margin: var(--space-2) 0 0; font-size: 13px; font-weight: 600; color: var(--muted); }
+
+.commute-summary { margin: 0; font-size: 13px; }
+
+.commute-bars-host { display: flex; flex-direction: column; gap: 4px; }
+
+.commute-bars {
+  display: grid;
+  grid-template-columns: repeat(24, 1fr);
+  align-items: end;
+  gap: 3px;
+  height: 120px;
+  padding-bottom: 2px;
+  border-bottom: 1px solid var(--line);
+}
+
+.commute-bar-col { display: flex; align-items: flex-end; height: 100%; }
+
+.commute-bar-col-fill {
+  width: 100%;
+  border-radius: 3px 3px 0 0;
+  background: var(--accent);
+  opacity: 0.85;
+  transition: height 240ms ease;
+}
+
+/* 一小时只有一条样本的时段弱化显示，免得几条数据看着像规律 */
+.commute-bar-col-fill.is-thin { opacity: 0.38; }
+
+.commute-bar-col-fill.is-none { background: var(--line); opacity: 1; }
+
+.commute-axis { display: grid; grid-template-columns: repeat(24, 1fr); gap: 3px; font-size: 10px; color: var(--muted); }
+
+.commute-axis span { text-align: center; }
+
+.commute-caption { margin: 0; font-size: 12px; }
+
+.commute-heat-host { display: flex; flex-direction: column; gap: 6px; }
+
+.commute-heat { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+
+.commute-heat-head { font-size: 11px; color: var(--muted); text-align: center; }
+
+.commute-heat-pad { visibility: hidden; }
+
+.commute-heat-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1 / 1;
+  border-radius: var(--radius-sm);
+  background: var(--line);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.commute-heat-cell.is-none { background: var(--hover); }
+
+.commute-heat-cell.ok { background: #d9f2e6; background: color-mix(in srgb, var(--ok) 26%, transparent); color: var(--ok); }
+
+.commute-heat-cell.hold { background: #fdf0cf; background: color-mix(in srgb, var(--hold) 26%, transparent); color: var(--hold); }
+
+.commute-heat-cell.danger { background: #fbdcdc; background: color-mix(in srgb, var(--danger) 26%, transparent); color: var(--danger); }
+
+.commute-heat-text { font-weight: 600; }
+
+/* 「设置」弹窗 */
+.commute-config-dialog { width: min(520px, calc(100vw - 32px)); }
+
+.commute-form { display: flex; flex-direction: column; gap: var(--space-3); }
+
+.commute-form h3 { margin: 0; font-size: 17px; }
+
+.commute-form-grid { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.commute-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+
+.commute-field > span { color: var(--muted); }
+
+.commute-field input {
+  font: inherit;
+  color: var(--ink);
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.commute-field input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.commute-form-hint { margin: 0; font-size: 12px; }
+
+.commute-form-hint.warn { color: var(--danger); }
+
+/* 起点/终点：百度候选列表 + 解析回显 */
+.commute-suggest {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+  padding: 2px;
+  max-height: 176px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.commute-suggest-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  color: var(--ink);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+}
+
+.commute-suggest-item:hover,
+.commute-suggest-item.is-active { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+
+.commute-suggest-name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.commute-suggest-sub {
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.commute-resolve { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
+
+.commute-resolve.ok { color: var(--ok); }
+
+.commute-resolve.warn { color: var(--danger); }
+
+/* 窄屏（手机经局域网打开时）：折线挪到数字下面，条形图压矮一点 */
+@media (max-width: 560px) {
+  .commute-figure { flex-direction: column; align-items: stretch; gap: var(--space-2); }
+  .commute-spark { width: 100%; text-align: left; }
+  .commute-bars { height: 90px; gap: 2px; }
 }
 
 /* ===== 首页「今天要做的」 ===== */
@@ -4117,6 +4473,19 @@ body.is-busy .code-main { box-shadow: var(--card-shadow), inset 0 0 0 1px var(--
 }
 
 .ledger-search input:focus { outline: none; box-shadow: none; }
+
+/* 口述记账：外观整个沿用搜索框，只把图标换成星形并独占一行 */
+.ledger-say {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  margin-bottom: var(--space-3);
+}
+
+.ledger-say .ledger-search { flex: 1 1 300px; }
+.ledger-say .ledger-search .ico { color: var(--accent); }
+.ledger-say .btn { flex: none; }
 
 .ledger-list { display: flex; flex-direction: column; gap: 3px; }
 

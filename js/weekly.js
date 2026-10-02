@@ -1,26 +1,10 @@
 (function () {
-  // 模型清单：每家一行，自带接口地址、模型名和密钥来源，以后加模型只改这里。
-  // 密钥放在 js/openrouter.local.js（不进版本库）。
-  const MODELS = [
-    {
-      id: "deepseek-flash",
-      label: "DeepSeek-V4.1-Flash",
-      url: "https://api.deepseek.com/chat/completions",
-      model: "deepseek-flash",
-      key: () => window.DEEPSEEK_API_KEY
-    },
-    {
-      id: "ark-deepseek-v41",
-      label: "火山方舟-deepseek-v4.1",
-      url: "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
-      model: "ep-20260929143640-d6pbl",
-      key: () => window.ARK_API_KEY
-    }
-  ];
+  /* 模型清单和请求都走 js/llm.js（那边一张表管全部页面），
+     密钥放在 js/openrouter.local.js（不进版本库）。 */
 
-  function findModel(id) {
-    return MODELS.find((item) => item.id === id) || MODELS[0];
-  }
+  const MODELS = LLM.MODELS;
+  const findModel = LLM.findModel;
+  const stripFence = LLM.stripFence;
 
   // 润色力度：只改提示词和温度。任何力度下条目数量都不变，
   // 这样解析回写的结构始终是稳的。
@@ -69,13 +53,7 @@
     document.getElementById("copy-md").addEventListener("click", copyMarkdown);
     document.getElementById("week-span").addEventListener("change", onSpanChange);
     document.getElementById("week-end").addEventListener("change", onEndChange);
-    const modelSelect = document.getElementById("polish-model");
-    MODELS.forEach((item) => {
-      const option = document.createElement("option");
-      option.value = item.id;
-      option.textContent = item.label;
-      modelSelect.append(option);
-    });
+    LLM.fillSelect(document.getElementById("polish-model"), "");
 
     const modeSelect = document.getElementById("polish-mode");
     Object.keys(POLISH_MODES).forEach((id) => {
@@ -552,57 +530,23 @@
     const model = findModel(modelId);
     const modeId = document.getElementById("polish-mode").value || "expand";
     const mode = POLISH_MODES[modeId] || POLISH_MODES.expand;
-    const key = model.key();
-    if (!key) {
-      Nav.toast("没有配置「" + model.label + "」的密钥");
-      return;
-    }
     button.disabled = true;
     button.textContent = "润色中…";
     document.getElementById("polish-usage").hidden = true;
     try {
       await persist();
       const weeklyReport = reportText();
-      const response = await fetch(
-        model.url,
-        {
-            method: "POST",
-            headers: {
-                Authorization: "Bearer " + key,
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-                model: model.model,
-                temperature: mode.temperature,
-                max_tokens: 4000,
-                messages: [{
-                    role: "user",
-                    content: buildPrompt(weeklyReport, modeId)
-                }]
-            })
-        }
-    );
-
-      let data = null;
-      try {
-        data = await response.json();
-      } catch (err) {
-        data = null;
-      }
-      showTokenUsage(data && data.usage);
-      if (!response.ok) {
-        const message = data && data.error && data.error.message ? data.error.message : "接口返回 " + response.status;
-        Nav.toast(message);
-        return;
-      }
-      const result = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
-      if (!result || !String(result).trim()) {
-        Nav.toast("接口没有返回润色内容");
-        return;
-      }
-      document.getElementById("polish-result").value = stripFence(result);
+      const reply = await LLM.chat({
+        model: model,
+        temperature: mode.temperature,
+        maxTokens: 4000,
+        messages: [{ role: "user", content: buildPrompt(weeklyReport, modeId) }]
+      });
+      showTokenUsage(reply.usage);
+      document.getElementById("polish-result").value = stripFence(reply.content);
       document.getElementById("polish-dialog").showModal();
     } catch (err) {
+      if (err && err.usage) showTokenUsage(err.usage);
       Nav.toast(err && err.message ? err.message : "调用接口失败");
     } finally {
       button.disabled = false;
@@ -612,25 +556,9 @@
 
   function showTokenUsage(usage) {
     const node = document.getElementById("polish-usage");
-    const prompt = usage ? Number(usage.prompt_tokens) : NaN;
-    const completion = usage ? Number(usage.completion_tokens) : NaN;
-    let total = usage ? Number(usage.total_tokens) : NaN;
-    if (!Number.isFinite(total) && Number.isFinite(prompt) && Number.isFinite(completion)) {
-      total = prompt + completion;
-    }
+    const text = LLM.usageText(usage);
     node.hidden = false;
-    if (!Number.isFinite(total)) {
-      node.textContent = "本次未返回 token 用量";
-      return;
-    }
-    const parts = ["本次消耗 " + total.toLocaleString("zh-CN") + " token"];
-    if (Number.isFinite(prompt)) parts.push("输入 " + prompt.toLocaleString("zh-CN"));
-    if (Number.isFinite(completion)) parts.push("输出 " + completion.toLocaleString("zh-CN"));
-    node.textContent = parts.join(" · ");
-  }
-
-  function stripFence(text) {
-    return String(text || "").trim().replace(/^```[^\n]*\n/, "").replace(/\n```$/, "").trim();
+    node.textContent = text ? "本次消耗 " + text : "本次未返回 token 用量";
   }
 
   function parsePolished(text) {

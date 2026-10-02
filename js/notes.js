@@ -16,6 +16,7 @@
   const PAGE = 50;
   let matched = [];
   let renderLimit = PAGE;
+  let importing = false;
   let scanSeq = 0;
   let scanDone = 0;
   let scanTotal = 0;
@@ -34,7 +35,7 @@
     // 别处改了笔记索引就重新读。正在打字（dirty）时不打断——
     // 编辑器里的内容还没存，这时候换掉会让人以为白写了。
     Workbench.onChange(["notes.json"], async () => {
-      if (dirty) return;
+      if (dirty || importing) return;
       notes = await Workbench.loadNoteIndex();
       renderList();
     });
@@ -43,6 +44,10 @@
   function bind() {
     document.getElementById("note-search").addEventListener("input", renderList);
     document.getElementById("new-note").addEventListener("click", createNote);
+    document.getElementById("import-note").addEventListener("click", () => {
+      document.getElementById("note-import-input").click();
+    });
+    document.getElementById("note-import-input").addEventListener("change", pickImportFiles);
     document.getElementById("note-title").addEventListener("input", markDirty);
     document.getElementById("note-project").addEventListener("change", markDirty);
     document.getElementById("note-pin").addEventListener("change", markDirty);
@@ -1480,6 +1485,118 @@
     if (listEl) listEl.scrollTop = 0;
     document.getElementById("note-title").focus();
     document.getElementById("note-title").select();
+  }
+
+  /* ===== 导入 Markdown =====
+     选一批 .md 文件进来：文件名（去掉扩展名）当标题，正文原样存成 notes/<id>.md。
+     归属项目不猜——文件里也没这个信息，所以读完文件弹个框让用户自己选。 */
+
+  const IMPORT_EXT = /\.(md|markdown)$/i;
+
+  async function pickImportFiles(event) {
+    const input = event.currentTarget;
+    const files = Array.from(input.files || []);
+    input.value = "";   // 清空，同一批文件再选一次也能触发 change
+    if (!files.length) return;
+    const picked = files.filter((file) => IMPORT_EXT.test(file.name));
+    const skipped = files.length - picked.length;
+    if (!picked.length) {
+      Nav.toast("只认 .md / .markdown 文件");
+      return;
+    }
+    let entries;
+    try {
+      entries = await Promise.all(picked.map(readMarkdownFile));
+    } catch (err) {
+      Nav.toast(err && err.message ? err.message : "这些文件读不出来");
+      return;
+    }
+    const project = await askImportProject(entries);
+    if (project == null) return;
+    try {
+      const count = await importNotes(entries, project);
+      Nav.toast(skipped
+        ? `已导入 ${count} 篇笔记（跳过 ${skipped} 个非 .md 文件）`
+        : `已导入 ${count} 篇笔记`);
+    } catch (err) {
+      Nav.toast(err && err.message ? err.message : "导入失败");
+    }
+  }
+
+  async function readMarkdownFile(file) {
+    const text = await file.text();
+    return {
+      title: file.name.replace(IMPORT_EXT, "").trim() || "未命名",
+      body: String(text || "").replace(/\r\n/g, "\n")
+    };
+  }
+
+  // 导入前问一句"进哪个项目"。用户没选（取消 / Esc）就返回 null，什么都不做。
+  function askImportProject(entries) {
+    return new Promise((resolve) => {
+      const dialog = document.createElement("dialog");
+      dialog.className = "code-dialog note-import";
+      dialog.innerHTML = [
+        "<h2>导入 Markdown</h2>",
+        '<p class="sub" id="note-import-hint"></p>',
+        '<label class="note-import-field">项目',
+        '  <select id="note-import-project" aria-label="导入到哪个项目"></select>',
+        "</label>",
+        '<ul id="note-import-list" class="note-import-list"></ul>',
+        '<div class="dialog-actions">',
+        '  <span class="dialog-spacer"></span>',
+        '  <button type="button" id="note-import-cancel" class="btn">取消</button>',
+        '  <button type="button" id="note-import-ok" class="btn primary">导入</button>',
+        "</div>"
+      ].join("");
+      const find = (id) => dialog.querySelector("#" + id);
+      find("note-import-hint").textContent = "共 " + entries.length + " 篇。文件名作标题，选好归属项目再导入。";
+      const list = find("note-import-list");
+      entries.forEach((entry) => {
+        const item = document.createElement("li");
+        item.textContent = entry.title;
+        list.append(item);
+      });
+      Nav.fillProjects(find("note-import-project"), Workbench.meta.projects[0]);
+      let settled = false;
+      const close = (value) => {
+        if (settled) return;
+        settled = true;
+        if (dialog.open) dialog.close();
+        dialog.remove();
+        resolve(value);
+      };
+      find("note-import-cancel").addEventListener("click", () => close(null));
+      find("note-import-ok").addEventListener("click", () => close(find("note-import-project").value));
+      dialog.addEventListener("close", () => close(null));
+      dialog.addEventListener("cancel", () => close(null));
+      document.body.append(dialog);
+      dialog.showModal();
+    });
+  }
+
+  async function importNotes(entries, project) {
+    await flush();   // 编辑器里还没存的改动先落地，免得被下面的重载冲掉
+    importing = true;
+    try {
+      for (const entry of entries) {
+        const note = await Workbench.writeNote({
+          id: Workbench.uid(),
+          title: entry.title,
+          kind: "note",
+          project: project,
+          pinned: false
+        }, entry.body);
+        // 正文已经在手上，顺手填掉搜索缓存，省得回头再读一遍文件
+        bodyCache.set(note.id, entry.body.toLowerCase());
+      }
+    } finally {
+      importing = false;
+    }
+    // 索引由 writeNote 落盘并按 updatedAt 排好序，直接重读一份，别自己拼
+    notes = await Workbench.loadNoteIndex();
+    renderList();
+    return entries.length;
   }
 
   // 删除先进回收站：只标记索引，正文 .md 保留，可撤销 / 可恢复

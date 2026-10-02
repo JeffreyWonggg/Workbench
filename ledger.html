@@ -30,6 +30,14 @@
           </div>
         </header>
 
+        <div class="ledger-say">
+          <div class="ledger-search">
+            <svg class="ico" aria-hidden="true"><use href="#i-sparkle"></use></svg>
+            <input id="ledger-say-input" type="text" placeholder="说一句就能记，例如：昨天打车 38" aria-label="口述记账" autocomplete="off">
+          </div>
+          <button type="button" id="ledger-say-parse" class="btn">解析</button>
+        </div>
+
         <div class="ledger-stats">
           <div class="card ledger-stat">
             <span class="ledger-stat-label">支出</span>
@@ -102,6 +110,7 @@
         </label>
       </div>
       <datalist id="ledger-category-options"></datalist>
+      <p id="ledger-ai-hint" class="sub" hidden></p>
       <p id="ledger-error" class="vault-error" hidden></p>
       <div class="dialog-actions">
         <span class="dialog-spacer"></span>
@@ -119,6 +128,9 @@
   <script src="js/sync-core.js"></script>
   <script src="js/sync-cloudbase.js"></script>
   <script src="js/sync-ui.js"></script>
+  <script src="js/openrouter.local.js"></script>
+  <script src="js/llm.js"></script>
+  <script src="js/ledger-say.js"></script>
   <script src="js/ledger.js"></script>
 </body>
 </html>

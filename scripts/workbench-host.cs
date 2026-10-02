@@ -12,6 +12,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Drawing.Text;
+using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -113,6 +114,7 @@ sealed class WorkbenchHost {
     if (listener == null) return;
     StartScreenshotHotkey();
     StartTray();
+    StartCommuteWatch();
     ThreadPool.QueueUserWorkItem(delegate { Listen(listener); });
     Thread.Sleep(Timeout.Infinite);
   }
@@ -459,6 +461,108 @@ sealed class WorkbenchHost {
             return;
           }
           Send(response, 204, "text/plain", "");
+          return;
+        }
+      }
+
+      // 出行路况：百度地图「地理编码 + 驾车路线规划」的同源转发。
+      // 页面不直接调百度（Web 服务 API 没有 CORS 头），也拿不到 AK：
+      // AK 只躺在根目录 baidu.local.json 里，由本进程读取，永远不会回到页面。
+      if (string.Equals(request.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase) &&
+          string.Equals(request.Url.AbsolutePath, "/baidu/status", StringComparison.OrdinalIgnoreCase)) {
+        if (!string.IsNullOrEmpty(origin) && !ownOrigin) {
+          Send(response, 403, "text/plain", "forbidden");
+          return;
+        }
+        Send(response, 200, "application/json", BaiduStatusJson());
+        return;
+      }
+
+      // 取路况。定时采集和「看分段路况」共用同一个完整版请求，每次都带回耗时、里程、
+      // 一句话路况和分段明细（见 BaiduRouteJson），前端传的 detail=1 只是个意图标记
+      if (string.Equals(request.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase) &&
+          string.Equals(request.Url.AbsolutePath, "/baidu/route", StringComparison.OrdinalIgnoreCase)) {
+        if (!string.IsNullOrEmpty(origin) && !ownOrigin) {
+          Send(response, 403, "text/plain", "forbidden");
+          return;
+        }
+        Send(response, 200, "application/json", BaiduRouteJson(
+          QueryValue(request, "origin"), QueryValue(request, "destination"), QueryValue(request, "city")));
+        return;
+      }
+
+      // 只解析地址、不取路线：设置弹窗里用来回显「百度到底把它认成了哪里」
+      if (string.Equals(request.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase) &&
+          string.Equals(request.Url.AbsolutePath, "/baidu/geocode", StringComparison.OrdinalIgnoreCase)) {
+        if (!string.IsNullOrEmpty(origin) && !ownOrigin) {
+          Send(response, 403, "text/plain", "forbidden");
+          return;
+        }
+        Send(response, 200, "application/json", BaiduGeocodeJson(
+          QueryValue(request, "address"), QueryValue(request, "city")));
+        return;
+      }
+
+      // 地点检索的「输入提示」：把用户敲的片段交给百度补全
+      if (string.Equals(request.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase) &&
+          string.Equals(request.Url.AbsolutePath, "/baidu/suggest", StringComparison.OrdinalIgnoreCase)) {
+        if (!string.IsNullOrEmpty(origin) && !ownOrigin) {
+          Send(response, 403, "text/plain", "forbidden");
+          return;
+        }
+        Send(response, 200, "application/json", BaiduSuggestJson(
+          QueryValue(request, "q"), QueryValue(request, "city")));
+        return;
+      }
+
+      // 出行路况的「后端定时采集」：页面把当前线路交给服务端（POST），
+      // 服务端每 15 分钟自己问一次百度，采到的样本先攒在根目录 commute-spool.json；
+      // 页面下次打开时用 GET /baidu/spool 取走并并进数据文件夹的 commute.json。
+      // 这样「电脑开着但页面没开」的那段时间也不会断样本。
+      if (string.Equals(request.Url.AbsolutePath, "/baidu/watch", StringComparison.OrdinalIgnoreCase)) {
+        if (string.Equals(request.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase)) {
+          if (!string.IsNullOrEmpty(origin) && !ownOrigin) {
+            Send(response, 403, "text/plain", "forbidden");
+            return;
+          }
+          Send(response, 200, "application/json", BaiduWatchJson());
+          return;
+        }
+        if (string.Equals(request.HttpMethod, "POST", StringComparison.OrdinalIgnoreCase)) {
+          // 写盘操作，和 /open、/catalog/roots 一样只认本机页面
+          if (!ownOrigin) {
+            Send(response, 403, "text/plain", "forbidden");
+            return;
+          }
+          string watchBody;
+          using (StreamReader reader = new StreamReader(request.InputStream, Encoding.UTF8)) {
+            watchBody = reader.ReadToEnd();
+          }
+          Send(response, 200, "application/json", SaveBaiduWatchJson(watchBody));
+          return;
+        }
+      }
+
+      // 页面开机/刷新时来收样本；页面自己采到的也会 POST 回来（见下）
+      if (string.Equals(request.Url.AbsolutePath, "/baidu/spool", StringComparison.OrdinalIgnoreCase)) {
+        if (string.Equals(request.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase)) {
+          if (!string.IsNullOrEmpty(origin) && !ownOrigin) {
+            Send(response, 403, "text/plain", "forbidden");
+            return;
+          }
+          Send(response, 200, "application/json", BaiduSpoolJson());
+          return;
+        }
+        if (string.Equals(request.HttpMethod, "POST", StringComparison.OrdinalIgnoreCase)) {
+          if (!ownOrigin) {
+            Send(response, 403, "text/plain", "forbidden");
+            return;
+          }
+          string spoolBody;
+          using (StreamReader reader = new StreamReader(request.InputStream, Encoding.UTF8)) {
+            spoolBody = reader.ReadToEnd();
+          }
+          Send(response, 200, "application/json", MergeBaiduSpoolJson(spoolBody));
           return;
         }
       }
@@ -4538,6 +4642,829 @@ sealed class WorkbenchHost {
     response.ContentLength64 = bytes.Length;
     response.OutputStream.Write(bytes, 0, bytes.Length);
     response.OutputStream.Close();
+  }
+
+  // ===== 出行路况：百度地图转发 =====
+  // 这里做两件事：把地址转成经纬度（百度路线规划只吃「纬度,经度」），再问「路线规划」（direction/v2）。
+  // 接口是无状态的：起终点由前端通过 query 传进来，服务端不读也不写数据文件夹。
+  // 出站超时 9 秒；地理编码结果长期缓存（地址没变就不重复解析），
+  // 同一线路 60 秒内直接复用上次结果（防连点刷新、防多设备同时打百度）。
+
+  sealed class BaiduRouteCache {
+    public DateTime At;
+    public string Json;
+  }
+
+  sealed class BaiduFail : Exception {
+    public BaiduFail(string message) : base(message) { }
+  }
+
+  static readonly object BaiduLock = new object();
+  static readonly Dictionary<string, BaiduGeo> BaiduGeoCache = new Dictionary<string, BaiduGeo>();
+  static readonly Dictionary<string, BaiduRouteCache> BaiduRouteCaches = new Dictionary<string, BaiduRouteCache>();
+  const int BaiduRouteCacheMs = 60 * 1000;
+  const int BaiduTimeoutMs = 9000;
+  static bool BaiduTlsReady = false;
+
+  static string BaiduAkPath() {
+    return Path.Combine(Root, "baidu.local.json");
+  }
+
+  // .NET 4.x 默认不一定允许 TLS 1.2，不显式打开会握手失败。
+  // 用数值 3072 而不是 SecurityProtocolType.Tls12：旧引用程序集里没有这个枚举名。
+  static void EnsureBaiduTls() {
+    if (BaiduTlsReady) return;
+    BaiduTlsReady = true;
+    try { ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072; } catch (Exception) { }
+  }
+
+  static string ReadBaiduAk() {
+    try {
+      if (!File.Exists(BaiduAkPath())) return "";
+      string text = File.ReadAllText(BaiduAkPath(), Encoding.UTF8);
+      Dictionary<string, object> config = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(text);
+      if (config == null || !config.ContainsKey("ak")) return "";
+      return Convert.ToString(config["ak"]).Trim();
+    } catch (Exception) {
+      return "";
+    }
+  }
+
+  static string BaiduStatusJson() {
+    Dictionary<string, object> root = new Dictionary<string, object>();
+    root["configured"] = ReadBaiduAk().Length > 0;
+    root["path"] = BaiduAkPath();
+    return new JavaScriptSerializer().Serialize(root);
+  }
+
+  static string BaiduError(string message) {
+    Dictionary<string, object> root = new Dictionary<string, object>();
+    root["ok"] = false;
+    root["error"] = message;
+    return new JavaScriptSerializer().Serialize(root);
+  }
+
+  // 「纬度,经度」直接可用；其它一律当地址去解析
+  static bool IsLatLng(string text) {
+    if (string.IsNullOrEmpty(text)) return false;
+    string[] parts = text.Split(',');
+    if (parts.Length != 2) return false;
+    double lat, lng;
+    if (!double.TryParse(parts[0].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out lat)) return false;
+    if (!double.TryParse(parts[1].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out lng)) return false;
+    return lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180 && (lat != 0 || lng != 0);
+  }
+
+  static string BaiduGet(string url) {
+    HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
+    request.Method = "GET";
+    request.Timeout = BaiduTimeoutMs;
+    request.ReadWriteTimeout = BaiduTimeoutMs;
+    request.UserAgent = "workbench-host";
+    try {
+      using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+      using (Stream stream = response.GetResponseStream())
+      using (StreamReader reader = new StreamReader(stream, Encoding.UTF8)) {
+        return reader.ReadToEnd();
+      }
+    } catch (WebException ex) {
+      throw new BaiduFail("连不上 api.map.baidu.com（" + ex.Message + "），检查网络或代理");
+    }
+  }
+
+  static Dictionary<string, object> BaiduJson(string text) {
+    Dictionary<string, object> payload = new JavaScriptSerializer().DeserializeObject(text) as Dictionary<string, object>;
+    if (payload == null) throw new BaiduFail("百度返回的内容看不懂（可能被网关或代理改过）");
+    return payload;
+  }
+
+  static int BaiduStatus(Dictionary<string, object> payload) {
+    object status;
+    if (!payload.TryGetValue("status", out status) || status == null) return -1;
+    try { return Convert.ToInt32(status); } catch (Exception) { return -1; }
+  }
+
+  static string MessageOf(Dictionary<string, object> payload) {
+    object message;
+    if (!payload.TryGetValue("message", out message) || message == null) return "";
+    return Convert.ToString(message);
+  }
+
+  // 错误码翻成人话，避免页面上只出现一个数字
+  static string BaiduStatusText(int status, string message) {
+    switch (status) {
+      case 1: return "百度服务内部错误，过一会儿再试";
+      case 2: return "请求参数不对，检查起点终点的写法";
+      case 3: return "AK 权限校验失败：确认这个 AK 开通了「地理编码」和「驾车路线规划」";
+      case 4: return "AK 配额已经用完了";
+      case 5: return "AK 不存在或已过期，去控制台确认一下";
+      case 200: return "AK 不对（百度说：" + message + "）：确认 baidu.local.json 里填的是控制台里那个「服务端」AK";
+      case 201: return "这个应用被百度禁用了";
+      case 202: return "AK 校验没过，可能填错了或者类型不对（要选「服务端」）";
+      case 203: return "AK 权限校验失败：确认这个 AK 勾上了「地理编码」和「驾车路线规划」";
+      case 210: return "服务端 AK 的 IP 白名单没放行这台机器：控制台里把白名单留空或加上本机出口 IP";
+      case 240: return "这个 AK 的「Web 服务 API」被禁用了";
+      case 251: return "这个 AK 没有权限用这个服务（缺「地点检索」时输入提示会退化成纯文本）";
+      case 302: return "这个 AK 没有开通用到的接口（地理编码 / 驾车路线规划 / 地点检索），去控制台补勾";
+      case 401: return "AK 无效（401），可能填错了或者被删了";
+      case 402: return "AK 配额超限（402）";
+      default:
+        return "百度接口返回 status=" + status.ToString()
+          + (string.IsNullOrEmpty(message) ? "" : "（" + message + "）");
+    }
+  }
+
+  static int ToInt(Dictionary<string, object> map, string key) {
+    if (map == null) return 0;
+    object value;
+    if (!map.TryGetValue(key, out value) || value == null) return 0;
+    try { return Convert.ToInt32(value); } catch (Exception) { return 0; }
+  }
+
+  static string TextOf(Dictionary<string, object> map, string key) {
+    if (map == null) return "";
+    object value;
+    if (!map.TryGetValue(key, out value) || value == null) return "";
+    try { return Convert.ToString(value).Trim(); } catch (Exception) { return ""; }
+  }
+
+  // 坐标转成统一的 "纬度,经度" 文本（固定 6 位小数，够到米级）
+  static string CoordText(double lat, double lng) {
+    return lat.ToString("0.000000", CultureInfo.InvariantCulture) + ","
+      + lng.ToString("0.000000", CultureInfo.InvariantCulture);
+  }
+
+  static string BaiduNoAkMessage() {
+    return "还没配百度 AK：在 " + BaiduAkPath()
+      + " 里填 {\"ak\":\"你的服务端 AK\"} 再重启工作台（README 的「出行路况」一节有申请步骤）";
+  }
+
+  // 一次地理编码的完整结果：坐标 + 百度自己给的判据。
+  // precise=0 说明百度没能精确匹配（很可能是被匹配到别的城市去了），
+  // 页面拿它来提醒「百度把它认成了别的地方」——这正是「东莞厚街万达」跑到北京的原因。
+  sealed class BaiduGeo {
+    public string Coord = "";
+    public int Precise;
+    public int Comprehension;
+    public int Confidence;
+    public string Level = "";
+  }
+
+  // 地址 → 坐标 + 解析详情
+  static BaiduGeo BaiduGeoInfo(string ak, string address, string city) {
+    string key = (city == null ? "" : city) + "|" + address;
+    lock (BaiduLock) {
+      BaiduGeo cached;
+      if (BaiduGeoCache.TryGetValue(key, out cached)) return cached;
+    }
+    StringBuilder url = new StringBuilder("https://api.map.baidu.com/geocoding/v3/?output=json&address=");
+    url.Append(Uri.EscapeDataString(address));
+    if (!string.IsNullOrEmpty(city)) url.Append("&city=").Append(Uri.EscapeDataString(city));
+    url.Append("&ak=").Append(Uri.EscapeDataString(ak));
+
+    Dictionary<string, object> payload = BaiduJson(BaiduGet(url.ToString()));
+    int status = BaiduStatus(payload);
+    if (status != 0) {
+      throw new BaiduFail("地址「" + address + "」解析不了：" + BaiduStatusText(status, MessageOf(payload)));
+    }
+    Dictionary<string, object> result = payload.ContainsKey("result") ? payload["result"] as Dictionary<string, object> : null;
+    Dictionary<string, object> location = result != null && result.ContainsKey("location")
+      ? result["location"] as Dictionary<string, object> : null;
+    if (location == null || !location.ContainsKey("lat") || !location.ContainsKey("lng")) {
+      throw new BaiduFail("地址「" + address + "」没解析出坐标，写得更完整一点（带上城市或区）再试");
+    }
+    double lat = Convert.ToDouble(location["lat"], CultureInfo.InvariantCulture);
+    double lng = Convert.ToDouble(location["lng"], CultureInfo.InvariantCulture);
+    BaiduGeo info = new BaiduGeo();
+    info.Coord = CoordText(lat, lng);
+    info.Precise = ToInt(result, "precise");
+    info.Comprehension = ToInt(result, "comprehension");
+    info.Confidence = ToInt(result, "confidence");
+    info.Level = TextOf(result, "level");
+    lock (BaiduLock) {
+      if (BaiduGeoCache.Count > 200) BaiduGeoCache.Clear();
+      BaiduGeoCache[key] = info;
+    }
+    return info;
+  }
+
+  static string BaiduGeoCode(string ak, string address, string city) {
+    return BaiduGeoInfo(ak, address, city).Coord;
+  }
+
+  // 只解析、不取路线：设置弹窗里用来回显「百度到底把这个地址认成了哪里」。
+  // 回的就是解析出的坐标和 precise，页面据此在保存前拦一下明显认错的地址。
+  static string BaiduGeocodeJson(string address, string city) {
+    string ak = ReadBaiduAk();
+    if (ak.Length == 0) return BaiduError(BaiduNoAkMessage());
+    string text = address == null ? "" : address.Trim();
+    if (text.Length == 0) return BaiduError("地址没填");
+    try {
+      EnsureBaiduTls();
+      Dictionary<string, object> root = new Dictionary<string, object>();
+      // 本来就是「纬度,经度」的输入：不用问百度，直接当精确结果回
+      if (IsLatLng(text)) {
+        string[] parts = text.Split(',');
+        string lat = parts[0].Trim();
+        string lng = parts[1].Trim();
+        root["ok"] = true;
+        root["input"] = text;
+        root["coord"] = lat + "," + lng;
+        root["lat"] = lat;
+        root["lng"] = lng;
+        root["precise"] = 1;
+        root["level"] = "坐标";
+        root["byCoord"] = true;
+        return new JavaScriptSerializer().Serialize(root);
+      }
+      BaiduGeo info = BaiduGeoInfo(ak, text, city);
+      string[] coord = info.Coord.Split(',');
+      root["ok"] = true;
+      root["input"] = text;
+      root["coord"] = info.Coord;
+      root["lat"] = coord.Length > 0 ? coord[0].Trim() : "";
+      root["lng"] = coord.Length > 1 ? coord[1].Trim() : "";
+      root["precise"] = info.Precise;
+      root["level"] = info.Level;
+      root["comprehension"] = info.Comprehension;
+      root["confidence"] = info.Confidence;
+      return new JavaScriptSerializer().Serialize(root);
+    } catch (BaiduFail fail) {
+      return BaiduError(fail.Message);
+    } catch (Exception ex) {
+      return BaiduError("解析地址失败：" + ex.Message);
+    }
+  }
+
+  // 地点检索的「输入提示」：把用户敲的半截话交给百度补全。
+  // 回来的候选是百度自己认得的规范名称 + 坐标，选它就一定解析得对，
+  // 所以弹窗里能「选」就不靠纯文本猜（这也是「东莞厚街万达」那类问题的根治办法）。
+  static string BaiduSuggestJson(string query, string city) {
+    string ak = ReadBaiduAk();
+    if (ak.Length == 0) return BaiduError(BaiduNoAkMessage());
+    string text = query == null ? "" : query.Trim();
+    List<object> empty = new List<object>();
+    if (text.Length < 2) {
+      Dictionary<string, object> brief = new Dictionary<string, object>();
+      brief["ok"] = true;
+      brief["items"] = empty;
+      return new JavaScriptSerializer().Serialize(brief);
+    }
+    try {
+      EnsureBaiduTls();
+      StringBuilder url = new StringBuilder("https://api.map.baidu.com/place/v2/suggestion?output=json&query=");
+      url.Append(Uri.EscapeDataString(text));
+      // region 是必填参数：不传百度直接回「参数不对」。用户没指定城市就用「全国」，
+      // 让它按热度排序，人再自己认；填了城市就限定在那个城市里找。
+      url.Append("&region=").Append(Uri.EscapeDataString(string.IsNullOrEmpty(city) ? "全国" : city));
+      url.Append("&city_limit=false&ak=").Append(Uri.EscapeDataString(ak));
+
+      Dictionary<string, object> payload = BaiduJson(BaiduGet(url.ToString()));
+      int status = BaiduStatus(payload);
+      if (status != 0) {
+        throw new BaiduFail("地点提示用不了：" + BaiduStatusText(status, MessageOf(payload)));
+      }
+      object[] list = payload.ContainsKey("result") ? payload["result"] as object[] : null;
+      List<object> items = new List<object>();
+      if (list != null) {
+        for (int i = 0; i < list.Length && items.Count < 8; i++) {
+          Dictionary<string, object> item = list[i] as Dictionary<string, object>;
+          if (item == null) continue;
+          string name = TextOf(item, "name");
+          if (name.Length == 0) continue;
+          Dictionary<string, object> location = item.ContainsKey("location")
+            ? item["location"] as Dictionary<string, object> : null;
+          if (location == null || !location.ContainsKey("lat") || !location.ContainsKey("lng")) continue;
+          double lat = Convert.ToDouble(location["lat"], CultureInfo.InvariantCulture);
+          double lng = Convert.ToDouble(location["lng"], CultureInfo.InvariantCulture);
+          Dictionary<string, object> outItem = new Dictionary<string, object>();
+          outItem["name"] = name;
+          outItem["address"] = TextOf(item, "address");
+          outItem["city"] = TextOf(item, "city");
+          outItem["district"] = TextOf(item, "district");
+          outItem["town"] = TextOf(item, "town");
+          outItem["tag"] = TextOf(item, "tag");
+          outItem["lat"] = lat.ToString("0.000000", CultureInfo.InvariantCulture);
+          outItem["lng"] = lng.ToString("0.000000", CultureInfo.InvariantCulture);
+          items.Add(outItem);
+        }
+      }
+      Dictionary<string, object> rootJson = new Dictionary<string, object>();
+      rootJson["ok"] = true;
+      rootJson["items"] = items;
+      return new JavaScriptSerializer().Serialize(rootJson);
+    } catch (BaiduFail fail) {
+      return BaiduError(fail.Message);
+    } catch (Exception ex) {
+      return BaiduError("取地点提示失败：" + ex.Message);
+    }
+  }
+
+  // 百度给的路况等级：1 畅通 / 2 缓行 / 3 拥堵 / 4 严重拥堵
+  static string TrafficLevelText(int status) {
+    switch (status) {
+      case 1: return "畅通";
+      case 2: return "缓行";
+      case 3: return "拥堵";
+      case 4: return "严重拥堵";
+      default: return "";
+    }
+  }
+
+  // route 级的 traffic_condition 只有轻量版会给（一个数字，整条路线一个等级）；
+  // 完整版把它放进了 steps[i]（数组，逐段说清畅通多少米、拥堵多少米，见 StepsTraffic）。
+  // 现在整块都走完整版，这里只当 steps 意外缺失时的兜底。
+  static string TrafficText(Dictionary<string, object> route) {
+    object raw;
+    if (!route.TryGetValue("traffic_condition", out raw) || raw == null) return "";
+    object[] parts = raw as object[];
+    if (parts == null) return TrafficLevelText(ToInt(route, "traffic_condition"));
+    if (parts.Length == 0) return "";
+    int smooth = 0, slow = 0, jam = 0, heavy = 0;
+    for (int i = 0; i < parts.Length; i++) {
+      Dictionary<string, object> part = parts[i] as Dictionary<string, object>;
+      if (part == null) continue;
+      int status = ToInt(part, "status");
+      if (status == 1) smooth++;
+      else if (status == 2) slow++;
+      else if (status == 3) jam++;
+      else if (status == 4) heavy++;
+    }
+    List<string> bits = new List<string>();
+    if (smooth > 0) bits.Add("畅通 " + smooth.ToString() + " 段");
+    if (slow > 0) bits.Add("缓行 " + slow.ToString() + " 段");
+    if (jam > 0) bits.Add("拥堵 " + jam.ToString() + " 段");
+    if (heavy > 0) bits.Add("严重拥堵 " + heavy.ToString() + " 段");
+    return string.Join(" · ", bits.ToArray());
+  }
+
+  static double BaiduNumber(Dictionary<string, object> item, string key) {
+    object raw;
+    if (item == null || !item.TryGetValue(key, out raw) || raw == null) return 0;
+    try { return Convert.ToDouble(raw, CultureInfo.InvariantCulture); } catch (Exception) { return 0; }
+  }
+
+  // 一段路里「畅通 / 缓行 / 拥堵 / 严重拥堵」各多少米：下标 1..4 就是等级，0 不用
+  static double[] StepTrafficMeters(Dictionary<string, object> step) {
+    double[] meters = new double[5];
+    object raw;
+    if (step == null || !step.TryGetValue("traffic_condition", out raw)) return meters;
+    object[] parts = raw as object[];
+    if (parts == null) return meters;
+    for (int i = 0; i < parts.Length; i++) {
+      Dictionary<string, object> part = parts[i] as Dictionary<string, object>;
+      if (part == null) continue;
+      int status = ToInt(part, "status");
+      if (status < 1 || status > 4) continue;
+      meters[status] += BaiduNumber(part, "distance");
+    }
+    return meters;
+  }
+
+  // 整条路线里「畅通 / 缓行 / 拥堵 / 严重拥堵」各多少米（下标 1..4 就是等级，0 不用）
+  static double[] StepsTrafficTotals(Dictionary<string, object> route) {
+    double[] total = new double[5];
+    object rawSteps;
+    if (route != null && route.TryGetValue("steps", out rawSteps)) {
+      object[] steps = rawSteps as object[];
+      if (steps != null) {
+        for (int i = 0; i < steps.Length; i++) {
+          double[] meters = StepTrafficMeters(steps[i] as Dictionary<string, object>);
+          for (int status = 1; status <= 4; status++) total[status] += meters[status];
+        }
+      }
+    }
+    return total;
+  }
+
+  // 整条路线按里程汇总："畅通 8.2 公里 · 缓行 3.1 公里 · 拥堵 1.8 公里"。
+  // 比"拥堵 3 段"有用：同样 3 段，堵 200 米和堵 2 公里不是一回事。
+  static string StepsTraffic(Dictionary<string, object> route) {
+    double[] total = StepsTrafficTotals(route);
+    List<string> bits = new List<string>();
+    for (int status = 1; status <= 4; status++) {
+      if (total[status] < 1) continue;
+      bits.Add(TrafficLevelText(status) + " " + MetersText(total[status]));
+    }
+    return string.Join(" · ", bits.ToArray());
+  }
+
+  // 卡片上那行只放最关键的一句：最堵的那一档 + 里程（全畅通就直接说畅通）。
+  // 完整版的路况是按里程给的四档，全报出来一行放不下。
+  static string TrafficBrief(Dictionary<string, object> route) {
+    double[] total = StepsTrafficTotals(route);
+    for (int status = 4; status >= 1; status--) {
+      if (total[status] < 1) continue;
+      return status == 1
+        ? TrafficLevelText(1)
+        : TrafficLevelText(status) + " " + MetersText(total[status]);
+    }
+    return "";
+  }
+
+  static string MetersText(double meters) {
+    if (meters >= 1000) return (meters / 1000).ToString("0.0", CultureInfo.InvariantCulture) + " 公里";
+    return Math.Round(meters).ToString(CultureInfo.InvariantCulture) + " 米";
+  }
+
+  // 分段明细：只留页面要用的字段，丢掉每段那串 path 坐标——
+  // 一条线路十几段、每段几百个点，页面一个都用不上。
+  static object[] StepsJson(Dictionary<string, object> route) {
+    List<object> list = new List<object>();
+    object rawSteps;
+    if (route == null || !route.TryGetValue("steps", out rawSteps)) return list.ToArray();
+    object[] steps = rawSteps as object[];
+    if (steps == null) return list.ToArray();
+    for (int i = 0; i < steps.Length; i++) {
+      Dictionary<string, object> step = steps[i] as Dictionary<string, object>;
+      if (step == null) continue;
+      int distance = ToInt(step, "distance");
+      if (distance <= 0) continue;
+      double[] meters = StepTrafficMeters(step);
+      int level = 1; // 这一段里最差的等级：全畅通就是 1
+      for (int status = 4; status >= 1; status--) {
+        if (meters[status] > 0) { level = status; break; }
+      }
+      Dictionary<string, object> item = new Dictionary<string, object>();
+      item["road"] = TextOf(step, "road_name");
+      item["distance"] = distance;
+      item["duration"] = ToInt(step, "duration");
+      item["level"] = level;
+      item["jam"] = (int)Math.Round(meters[3] + meters[4]); // 拥堵 + 严重拥堵的米数
+      item["slow"] = (int)Math.Round(meters[2]);            // 缓行的米数
+      list.Add(item);
+    }
+    return list.ToArray();
+  }
+
+  static Dictionary<string, object> PointJson(string text, string coord) {
+    string[] parts = coord.Split(',');
+    Dictionary<string, object> point = new Dictionary<string, object>();
+    point["text"] = text;
+    point["lat"] = parts.Length > 0 ? parts[0].Trim() : "";
+    point["lng"] = parts.Length > 1 ? parts[1].Trim() : "";
+    return point;
+  }
+
+  // 统一走完整版 direction/v2/driving + steps_info=1：
+  //   轻量版（directionlite）便宜，但耗时是系统性高估——同一条 117 公里线路实测
+  //   轻量版 106.6 分钟、完整版 90.2 分钟（距离都是 117.2 公里，差在时间估算），
+  //   而百度地图 APP 显示的正是后者的口径。
+  //   steps_info=1 是「哪条路堵多少米」的前提，也让卡片那句路况能按里程说清。
+  //   返回体约 48 KB / 次，15 分钟一次可以忽略；点开分段多半还能命中 60 秒缓存，不再多打一次。
+  static string BaiduRouteJson(string origin, string destination, string city) {
+    string ak = ReadBaiduAk();
+    if (ak.Length == 0) {
+      return BaiduError("还没配百度 AK：在 " + BaiduAkPath()
+        + " 里填 {\"ak\":\"你的服务端 AK\"} 再重启工作台（README 的「出行路况」一节有申请步骤）");
+    }
+    if (string.IsNullOrEmpty(origin) || string.IsNullOrEmpty(destination)) {
+      return BaiduError("起点和终点都要填");
+    }
+    try {
+      EnsureBaiduTls();
+      string originText = origin.Trim();
+      string destinationText = destination.Trim();
+      string originCoord = IsLatLng(originText) ? originText : BaiduGeoCode(ak, originText, city);
+      string destinationCoord = IsLatLng(destinationText) ? destinationText : BaiduGeoCode(ak, destinationText, city);
+
+      // 采集和「看分段路况」问的是同一个接口、同一份结果，缓存也就不再分档
+      string cacheKey = originCoord + "|" + destinationCoord;
+      lock (BaiduLock) {
+        BaiduRouteCache cached;
+        if (BaiduRouteCaches.TryGetValue(cacheKey, out cached)
+            && (DateTime.UtcNow - cached.At).TotalMilliseconds < BaiduRouteCacheMs) {
+          return cached.Json;
+        }
+      }
+
+      StringBuilder url = new StringBuilder(
+        "https://api.map.baidu.com/direction/v2/driving?steps_info=1&origin=");
+      url.Append(Uri.EscapeDataString(originCoord));
+      url.Append("&destination=").Append(Uri.EscapeDataString(destinationCoord));
+      url.Append("&ak=").Append(Uri.EscapeDataString(ak));
+
+      Dictionary<string, object> payload = BaiduJson(BaiduGet(url.ToString()));
+      int status = BaiduStatus(payload);
+      if (status != 0) {
+        throw new BaiduFail("路线规划失败：" + BaiduStatusText(status, MessageOf(payload)));
+      }
+      Dictionary<string, object> result = payload.ContainsKey("result")
+        ? payload["result"] as Dictionary<string, object> : null;
+      object[] routes = result != null && result.ContainsKey("routes") ? result["routes"] as object[] : null;
+      if (routes == null || routes.Length == 0) {
+        throw new BaiduFail("百度没给出可走的路线，检查起终点是不是太远或者跨海");
+      }
+      Dictionary<string, object> route = routes[0] as Dictionary<string, object>;
+      if (route == null) throw new BaiduFail("百度返回的路线看不懂");
+
+      Dictionary<string, object> root = new Dictionary<string, object>();
+      root["ok"] = true;
+      root["origin"] = PointJson(originText, originCoord);
+      root["destination"] = PointJson(destinationText, destinationCoord);
+      root["duration"] = ToInt(route, "duration");
+      root["distance"] = ToInt(route, "distance");
+      // 完整版的路况藏在 steps 里：卡片用一句话（最堵的那一档），分段区用逐段明细
+      string traffic = TrafficBrief(route);
+      if (traffic.Length == 0) traffic = TrafficText(route);
+      root["traffic"] = traffic;
+      root["segments"] = StepsJson(route);
+      root["at"] = DateTime.Now.ToString("s");
+
+      string json = new JavaScriptSerializer().Serialize(root);
+      lock (BaiduLock) {
+        if (BaiduRouteCaches.Count > 24) BaiduRouteCaches.Clear();
+        BaiduRouteCache entry = new BaiduRouteCache();
+        entry.At = DateTime.UtcNow;
+        entry.Json = json;
+        BaiduRouteCaches[cacheKey] = entry;
+      }
+      return json;
+    } catch (BaiduFail fail) {
+      return BaiduError(fail.Message);
+    } catch (Exception ex) {
+      return BaiduError("取路况失败：" + ex.Message);
+    }
+  }
+
+  // ===== 出行路况 · 后端定时采集 =====
+  // 页面不一定一直开着，但电脑一般一直开着——所以把「每 15 分钟问一次百度」搬到这边：
+  //
+  //   页面 → POST /baidu/watch   把当前线路同步过来（坐标文本 + 城市），route 为 null 表示别采了
+  //   服务端                      每 15 分钟采一条，攒进根目录 commute-spool.json
+  //   页面 → GET  /baidu/spool   打开/刷新时取走，按时间戳去重后并进数据文件夹的 commute.json
+  //   页面 → POST /baidu/spool   页面自己采到的那条也回传一份，两边共用一条采集时间线
+  //
+  // 为什么不让服务端直接写数据文件夹里的 commute.json：那个文件夹是页面用浏览器的
+  // 「文件系统访问 API」自己挑的，路径只有页面知道（浏览器也不会把绝对路径交出来），
+  // 服务端够不着。所以只能是「服务端采、页面并」。
+  //
+  // 两个文件都落在仓库根目录，和 baidu.local.json 一个待遇：里面有你的起终点（通常
+  // 就是住址），不进版本库、不参与云同步。
+
+  static readonly string WatchPath = Path.Combine(Root, "commute.local.json");
+  static readonly string SpoolPath = Path.Combine(Root, "commute-spool.json");
+  const int WatchIntervalMs = 15 * 60 * 1000;
+  const int WatchTickMs = 30 * 1000;
+  const int SpoolKeepDays = 180;
+  const int SpoolMaxSamples = 12000;
+  static readonly object WatchLock = new object();
+
+  static void StartCommuteWatch() {
+    Thread thread = new Thread(CommuteWatchLoop);
+    thread.Name = "commute-watch";
+    thread.IsBackground = true;
+    thread.Start();
+  }
+
+  // 每 30 秒醒一次看该不该采（真实间隔 15 分钟）。采集出问题只跳过这一轮——
+  // 线程不该因为一次网络抖动就死掉，更不该把整个服务带走。
+  static void CommuteWatchLoop() {
+    while (true) {
+      try { CommuteWatchTick(); } catch (Exception) { }
+      Thread.Sleep(WatchTickMs);
+    }
+  }
+
+  static void CommuteWatchTick() {
+    if (ReadBaiduAk().Length == 0) return;
+    Dictionary<string, object> watch = ReadJsonObject(WatchPath);
+    Dictionary<string, object> route = watch != null && watch.ContainsKey("route")
+      ? watch["route"] as Dictionary<string, object> : null;
+    if (route == null) return;
+    string origin = ValueOf(route, "origin");
+    string destination = ValueOf(route, "destination");
+    if (origin.Length == 0 || destination.Length == 0) return;
+
+    // 页面自己采的样本也会 POST 回来，所以这一份 spool 是双方共用的采集时间线：
+    // 上一条还不到 15 分钟就等着，不至于页面刚采完服务端又去打一次百度。
+    long newest = SpoolNewest();
+    if (newest > 0 && (NowMs() - newest) < WatchIntervalMs) return;
+
+    // 和页面走同一个完整版请求：耗时口径一致，样本和卡片才对得上
+    Dictionary<string, object> payload = ParseJsonObject(BaiduRouteJson(origin, destination, ValueOf(route, "city")));
+    if (payload == null || !BoolOf(payload, "ok")) return;
+    int duration = ToInt(payload, "duration");
+    if (duration <= 0) return;
+    // 服务端 60 秒内复用上次结果时给的是同一个 at，按它去重就不会塞重复样本
+    long at = IsoToMs(TextOf(payload, "at"));
+    SpoolAppend(at > 0 ? at : NowMs(), duration, ToInt(payload, "distance"), TextOf(payload, "traffic"));
+  }
+
+  // 线路同步：页面每次打开和每次改线路都会调一次（幂等）。
+  // 线路变了会把攒的样本清掉——旧线路的耗时混进新线路的均值，结论就全是错的。
+  static string SaveBaiduWatchJson(string body) {
+    Dictionary<string, object> payload = ParseJsonObject(body);
+    if (payload == null) return "{\"ok\":false,\"error\":\"请求体不是 JSON\"}";
+    Dictionary<string, object> route = payload.ContainsKey("route")
+      ? payload["route"] as Dictionary<string, object> : null;
+    string origin = route == null ? "" : ValueOf(route, "origin");
+    string destination = route == null ? "" : ValueOf(route, "destination");
+    if (origin.Length == 0 || destination.Length == 0) route = null;
+
+    Dictionary<string, object> file = new Dictionary<string, object>();
+    file["version"] = 1;
+    file["at"] = DateTime.Now.ToString("s");
+    if (route != null) {
+      Dictionary<string, object> saved = new Dictionary<string, object>();
+      saved["origin"] = origin;
+      saved["destination"] = destination;
+      saved["city"] = ValueOf(route, "city");
+      file["route"] = saved;
+    } else {
+      file["route"] = null;
+    }
+
+    lock (WatchLock) {
+      string before = WatchKeyOf(ReadJsonObject(WatchPath));
+      string now = route == null ? "" : origin + "|" + destination;
+      try {
+        File.WriteAllText(WatchPath, new JavaScriptSerializer().Serialize(file), Encoding.UTF8);
+      } catch (Exception) {
+        return "{\"ok\":false,\"error\":\"线路配置写不进去（检查仓库根目录的写权限）\"}";
+      }
+      if (!string.Equals(before, now, StringComparison.Ordinal)) ClearSpool();
+    }
+
+    Dictionary<string, object> root = new Dictionary<string, object>();
+    root["ok"] = true;
+    root["watching"] = route != null;
+    root["interval"] = WatchIntervalMs / 60000;
+    return new JavaScriptSerializer().Serialize(root);
+  }
+
+  static string BaiduWatchJson() {
+    Dictionary<string, object> watch = ReadJsonObject(WatchPath);
+    Dictionary<string, object> route = watch != null && watch.ContainsKey("route")
+      ? watch["route"] as Dictionary<string, object> : null;
+    Dictionary<string, object> root = new Dictionary<string, object>();
+    root["ok"] = true;
+    root["configured"] = ReadBaiduAk().Length > 0;
+    root["watching"] = route != null;
+    root["origin"] = route == null ? "" : ValueOf(route, "origin");
+    root["destination"] = route == null ? "" : ValueOf(route, "destination");
+    root["newest"] = SpoolNewest();
+    root["interval"] = WatchIntervalMs / 60000;
+    return new JavaScriptSerializer().Serialize(root);
+  }
+
+  static string WatchKeyOf(Dictionary<string, object> watch) {
+    if (watch == null || !watch.ContainsKey("route")) return "";
+    Dictionary<string, object> route = watch["route"] as Dictionary<string, object>;
+    if (route == null) return "";
+    return ValueOf(route, "origin") + "|" + ValueOf(route, "destination");
+  }
+
+  // 页面来收样本：整份 spool 都给它（不删），页面按时间戳自己去重，
+  // 这样服务端那边"上一条什么时候采的"始终有据可查。
+  static string BaiduSpoolJson() {
+    Dictionary<string, object> root = new Dictionary<string, object>();
+    root["ok"] = true;
+    lock (WatchLock) { root["samples"] = SpoolList(); }
+    return new JavaScriptSerializer().Serialize(root);
+  }
+
+  static string MergeBaiduSpoolJson(string body) {
+    Dictionary<string, object> payload = ParseJsonObject(body);
+    object[] samples = payload != null && payload.ContainsKey("samples") ? payload["samples"] as object[] : null;
+    int total = 0;
+    if (samples != null) total = SpoolMerge(samples);
+    return "{\"ok\":true,\"total\":" + total.ToString() + "}";
+  }
+
+  static void SpoolAppend(long t, int duration, int distance, string traffic) {
+    Dictionary<string, object> sample = new Dictionary<string, object>();
+    sample["t"] = t;
+    sample["d"] = duration;
+    sample["m"] = distance;
+    sample["x"] = traffic;
+    SpoolMerge(new object[] { sample });
+  }
+
+  // 样本合并的唯一入口（服务端采的、页面回传的都走这里）：按时间戳去重、
+  // 新的排前面、裁到 180 天 / 12000 条。返回合并后的总条数。
+  static int SpoolMerge(object[] incoming) {
+    lock (WatchLock) {
+      List<object> merged = new List<object>();
+      Dictionary<long, bool> seen = new Dictionary<long, bool>();
+      AppendSpoolSamples(merged, seen, incoming);
+      AppendSpoolSamples(merged, seen, SpoolList());
+      merged.Sort(CompareSpoolSamples);
+      List<object> kept = TrimSpoolSamples(merged);
+      WriteSpool(kept);
+      return kept.Count;
+    }
+  }
+
+  static void AppendSpoolSamples(List<object> target, Dictionary<long, bool> seen, object[] source) {
+    for (int i = 0; i < source.Length; i++) {
+      Dictionary<string, object> item = source[i] as Dictionary<string, object>;
+      if (item == null) continue;
+      long t = ToLong(item, "t");
+      long d = ToLong(item, "d");
+      if (t <= 0 || d <= 0 || seen.ContainsKey(t)) continue;
+      seen[t] = true;
+      Dictionary<string, object> sample = new Dictionary<string, object>();
+      sample["t"] = t;
+      sample["d"] = d;
+      sample["m"] = ToLong(item, "m");
+      sample["x"] = ValueOf(item, "x");
+      target.Add(sample);
+    }
+  }
+
+  static int CompareSpoolSamples(object left, object right) {
+    return ToLong(right as Dictionary<string, object>, "t").CompareTo(ToLong(left as Dictionary<string, object>, "t"));
+  }
+
+  static List<object> TrimSpoolSamples(List<object> items) {
+    long limit = NowMs() - (long)SpoolKeepDays * 24 * 60 * 60 * 1000;
+    List<object> kept = new List<object>();
+    for (int i = 0; i < items.Count && kept.Count < SpoolMaxSamples; i++) {
+      if (ToLong(items[i] as Dictionary<string, object>, "t") >= limit) kept.Add(items[i]);
+    }
+    return kept;
+  }
+
+  static void WriteSpool(List<object> items) {
+    Dictionary<string, object> file = new Dictionary<string, object>();
+    file["version"] = 1;
+    file["samples"] = items.ToArray();
+    try {
+      File.WriteAllText(SpoolPath, new JavaScriptSerializer().Serialize(file), Encoding.UTF8);
+    } catch (Exception) {
+      // 写不进去（磁盘满、被占用）就当这一轮没采，下次接着来
+    }
+  }
+
+  static void ClearSpool() {
+    lock (WatchLock) {
+      try { if (File.Exists(SpoolPath)) File.Delete(SpoolPath); } catch (Exception) { }
+    }
+  }
+
+  static object[] SpoolList() {
+    Dictionary<string, object> spool = ReadJsonObject(SpoolPath);
+    if (spool == null || !spool.ContainsKey("samples")) return new object[0];
+    object[] list = spool["samples"] as object[];
+    return list == null ? new object[0] : list;
+  }
+
+  static long SpoolNewest() {
+    object[] list = SpoolList();
+    long newest = 0;
+    for (int i = 0; i < list.Length; i++) {
+      long t = ToLong(list[i] as Dictionary<string, object>, "t");
+      if (t > newest) newest = t;
+    }
+    return newest;
+  }
+
+  static Dictionary<string, object> ReadJsonObject(string path) {
+    try {
+      if (!File.Exists(path)) return null;
+      return ParseJsonObject(File.ReadAllText(path, Encoding.UTF8));
+    } catch (Exception) {
+      return null;
+    }
+  }
+
+  static Dictionary<string, object> ParseJsonObject(string text) {
+    if (string.IsNullOrEmpty(text)) return null;
+    try {
+      return new JavaScriptSerializer().DeserializeObject(text) as Dictionary<string, object>;
+    } catch (Exception) {
+      return null;
+    }
+  }
+
+  static bool BoolOf(Dictionary<string, object> map, string key) {
+    if (map == null || !map.ContainsKey(key) || map[key] == null) return false;
+    try { return Convert.ToBoolean(map[key]); } catch (Exception) { return false; }
+  }
+
+  static long ToLong(Dictionary<string, object> map, string key) {
+    if (map == null || !map.ContainsKey(key) || map[key] == null) return 0;
+    try { return Convert.ToInt64(map[key]); } catch (Exception) { return 0; }
+  }
+
+  static long NowMs() {
+    return (long)(DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalMilliseconds;
+  }
+
+  // 服务端写的是本机时区的时间（DateTime.Now.ToString("s")），得按同一个时区解回来。
+  // DateTime 相减不看 Kind，直接减 epoch 等于把本机时间当成 UTC 时刻，时间戳会多出
+  // 一个时区偏移（北京时间 +8 小时）：周五 23:48 采的会被记成周六 07:48，
+  // 既落到错误的小时，又可能落到错误的一天；更麻烦的是服务端判断「上一条还不满 15 分钟」
+  // 时看到的是未来时间，接下来 8 小时就再也不采了。所以必须先转 UTC。
+  static long IsoToMs(string text) {
+    if (string.IsNullOrEmpty(text)) return 0;
+    try {
+      DateTime parsed = DateTime.Parse(text, CultureInfo.InvariantCulture, DateTimeStyles.None);
+      return (long)(parsed.ToUniversalTime() - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalMilliseconds;
+    } catch (Exception) {
+      return 0;
+    }
   }
 
   // ===== 系统托盘 =====

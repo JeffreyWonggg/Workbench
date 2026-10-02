@@ -7,6 +7,10 @@
     DeepSeekCard.init().catch((err) => {
       Nav.toast("余额卡片出错：" + (err && err.message ? err.message : "未知错误"));
     });
+    // 出行路况卡片同理：自己读盘、自己定时取数，出错不影响首页其它部分
+    BaiduCard.init().catch((err) => {
+      Nav.toast("出行路况卡片出错：" + (err && err.message ? err.message : "未知错误"));
+    });
     window.addEventListener("workbench-projects", () => {
       Nav.fillProjects(document.getElementById("capture-project"));
     });
@@ -74,7 +78,7 @@
      顺序和收起状态存在 localStorage（跟着浏览器走，和侧栏排序一个道理）。 */
 
   const LAYOUT_KEY = "wb-home-cards";
-  const CARD_KEYS = ["usage", "focus", "doing", "week", "notes", "git", "ledger"];
+  const CARD_KEYS = ["usage", "focus", "doing", "week", "notes", "git", "ledger", "commute"];
 
   let layout = readLayout();
   let editing = false;

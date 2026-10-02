@@ -18,8 +18,7 @@
 
   // files.json 不在这里：它指向 files/ 里的二进制本体，那些不上云，
   // 同步过去只会得到一堆打不开的卡片。
-  // chart-settings.json 也不在：擅长和弦、音量这类属于本机偏好，换台设备不应该被覆盖。
-  // deepseek.json 也不在：那是本机查余额留下的快照，每台设备各查各的，
+  // deepseek.json 也不在：那是本机查余额留下的缓存，每台设备各查各的，
   // 同步过去没有意义，还会因为两边都在写而反复产生冲突副本。
   const JSON_UNITS = ["todos.json", "reports.json", "notes.json", "recipes.json", "ledger.json", "software.json", "vault.json", "charts.json", "chart-settings.json"];
   const META_UNIT = "meta.json";          // 只同步项目清单，本机路径（工具、git 根目录）不外传

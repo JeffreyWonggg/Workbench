@@ -29,6 +29,14 @@
 
   function bind() {
     document.getElementById("ledger-add").addEventListener("click", () => openEditor(""));
+    document.getElementById("ledger-say-parse").addEventListener("click", sayParse);
+    // 口述框不在 form 里，回车不会误触「保存」
+    document.getElementById("ledger-say-input").addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        sayParse();
+      }
+    });
     document.getElementById("prev-month").addEventListener("click", () => shiftMonth(-1));
     document.getElementById("next-month").addEventListener("click", () => shiftMonth(1));
     document.getElementById("this-month").addEventListener("click", () => {
@@ -244,21 +252,9 @@
     document.getElementById("ledger-amount").value = item ? String(item.amount) : "";
     document.getElementById("ledger-date").value = item ? item.date : Workbench.todayIso();
     fillCategorySelect();
-    const cat = item ? item.category : "";
-    const select = document.getElementById("ledger-category");
-    const customWrap = document.getElementById("ledger-category-custom-wrap");
-    const customInput = document.getElementById("ledger-category-custom");
-    const known = Array.from(select.options).some((option) => option.value === cat);
-    if (cat && !known) {
-      select.value = "__custom__";
-      customWrap.hidden = false;
-      customInput.value = cat;
-    } else {
-      select.value = cat;
-      customWrap.hidden = true;
-      customInput.value = "";
-    }
+    applyCategory(item ? item.category : "");
     document.getElementById("ledger-note").value = item ? item.note : "";
+    sayHint(null);
     setError("");
     document.getElementById("ledger-dialog").showModal();
     document.getElementById("ledger-amount").focus();
@@ -296,6 +292,24 @@
       option.value = value;
       datalist.append(option);
     });
+  }
+
+  // 把分类填进下拉框：不在现有选项里（历史或口述新起的名字）就切到「自定义」
+  function applyCategory(category) {
+    const cat = String(category || "").trim();
+    const select = document.getElementById("ledger-category");
+    const customWrap = document.getElementById("ledger-category-custom-wrap");
+    const customInput = document.getElementById("ledger-category-custom");
+    const known = Array.from(select.options).some((option) => option.value === cat);
+    if (cat && !known) {
+      select.value = "__custom__";
+      customWrap.hidden = false;
+      customInput.value = cat;
+    } else {
+      select.value = cat;
+      customWrap.hidden = true;
+      customInput.value = "";
+    }
   }
 
   function setKind(kind) {
@@ -385,6 +399,88 @@
         render();
       }
     });
+  }
+
+  /* ===== 口述记账 =====
+     用户念一句「昨天打车 38」，交给模型解析成字段。
+     关键约束：解析结果只填进上面的弹窗，绝不直接写库——
+     模型把金额听错了，最坏也只是表单里一个能改的数字，不会变成一条错账。 */
+
+  async function sayParse() {
+    const input = document.getElementById("ledger-say-input");
+    const button = document.getElementById("ledger-say-parse");
+    const text = input.value.trim();
+    if (!text) {
+      Nav.toast("先写一句要记的账");
+      input.focus();
+      return;
+    }
+    const model = LLM.pickModel();
+    if (!model) {
+      Nav.toast("没有配置模型密钥：在 js/openrouter.local.js 里写 window.DEEPSEEK_API_KEY");
+      return;
+    }
+
+    const label = button.textContent;
+    button.disabled = true;
+    button.textContent = "解析中…";
+    try {
+      const live = Workbench.activeItems(state.items);
+      const categories = unique(DEFAULT_CATEGORIES.concat(live.map((item) => item.category).filter(Boolean)));
+      const reply = await LLM.chat({
+        model: model,
+        temperature: 0,   // 记账要可复现，不摇色子
+        maxTokens: 200,   // 只回一个 JSON，封住输出体积就是省钱
+        json: true,
+        messages: [{
+          role: "user",
+          content: LedgerSay.buildPrompt(text, { today: new Date(), categories: categories })
+        }]
+      });
+      const parsed = LedgerSay.parseReply(reply.content);
+      input.value = "";
+      openEditor("");
+      fillFromSay(parsed);
+      sayHint(parsed, reply.usage);
+      // 金额是唯一没有安全默认值的字段：没听出来就停在金额上让人补
+      const focusId = parsed.amount == null ? "ledger-amount" : "ledger-note";
+      document.getElementById(focusId).focus();
+    } catch (err) {
+      Nav.toast(err && err.message ? err.message : "解析失败");
+    } finally {
+      button.disabled = false;
+      button.textContent = label;
+    }
+  }
+
+  function fillFromSay(parsed) {
+    setKind(parsed.kind);
+    document.getElementById("ledger-amount").value = parsed.amount == null ? "" : String(parsed.amount);
+    document.getElementById("ledger-date").value = parsed.date || Workbench.todayIso();
+    applyCategory(parsed.category);
+    document.getElementById("ledger-note").value = parsed.note || "";
+  }
+
+  // 弹窗里那行「AI 解析：…」：说明填了什么、花了多少，提醒核对
+  function sayHint(parsed, usage) {
+    const hint = document.getElementById("ledger-ai-hint");
+    if (!parsed) {
+      hint.textContent = "";
+      hint.hidden = true;
+      return;
+    }
+    const parts = [];
+    if (parsed.amount == null) {
+      parts.push("没听出金额，请手动填");
+    } else {
+      parts.push((parsed.kind === "income" ? "收入" : "支出") + " " + money(parsed.amount));
+      if (parsed.category) parts.push(parsed.category);
+      parts.push(parsed.date || Workbench.todayIso());
+    }
+    const used = LLM.usageText(usage);
+    hint.textContent = "AI 解析：" + parts.join(" · ")
+      + (used ? "，消耗 " + used : "") + "，核对后保存";
+    hint.hidden = false;
   }
 
   /* ===== 小工具 ===== */
