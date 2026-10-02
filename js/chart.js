@@ -240,7 +240,8 @@
   }
 
   function excerptOf(item) {
-    const lines = Text.format(item.content).split("\n")
+    // 列表里的摘要也是「预览」，跟详细谱面用同一套规范化写法
+    const lines = Text.format(Text.normalizeChart(item.content)).split("\n")
       .filter((line) => line.trim().length > 0).slice(0, 5);
     return lines.length > 0 ? lines.join("\n") : "（空谱面）";
   }
@@ -376,26 +377,6 @@
     });
     $("chart-cancel").addEventListener("click", () => $("chart-editor").close());
     $("chart-form").addEventListener("submit", saveSong);
-    $("chart-paste").addEventListener("click", () => {
-      const area = $("chart-content");
-      const next = Text.inlineConvert(Text.clean(area.value));
-      if (next === area.value) return Nav.toast("没有可清洗的内容");
-      area.value = next;
-      refreshEditor();
-      Nav.toast("已清洗并合并内联和弦");
-    });
-    $("chart-format").addEventListener("click", () => {
-      const area = $("chart-content");
-      area.value = Text.format(area.value);
-      refreshEditor();
-      Nav.toast("已按列对齐");
-    });
-    $("chart-recommend").addEventListener("click", () => {
-      const best = bestKey($("chart-content").value, currentEditorKey());
-      keySelect.value = best.name;
-      renderChordPanel();
-      Nav.toast("推荐调：" + best.name + "（黑键 " + best.blackKeyCount + " 处）");
-    });
     $("chart-volume").addEventListener("input", (event) => {
       saveSettings({ volume: Number(event.target.value) });
     });
@@ -594,7 +575,9 @@
 
   function renderSheet(box, content) {
     box.innerHTML = "";
-    const lines = Text.normalizedLines(content);
+    // 显示前先把和弦写法规范化（#Fm → F#m、min7 → m7）：看着统一，也不容易看错。
+    // 只影响这里渲染出来的谱面，编辑框和保存的内容还是原文。
+    const lines = Text.normalizedLines(Text.normalizeChart(content));
     if (lines.length === 0) {
       const empty = document.createElement("p");
       empty.className = "empty";
@@ -829,15 +812,6 @@
     Nav.toast(asNew
       ? "已另存为 " + context.to.name + " 调"
       : "已转为 " + context.to.name + " 调（" + (context.steps > 0 ? "+" : "") + context.steps + " 半音）");
-  }
-
-  // 编辑器「推荐调」：直接取打分最优的那个调
-  function bestKey(content, fromKey) {
-    const chords = Text.parse(content).chords;
-    return Suggest.recommendKeys(chords, fromKey, {
-      favorites: state.settings.favorites,
-      weight: state.settings.weight
-    })[0];
   }
 
   /* ===== 擅长和弦 ===== */

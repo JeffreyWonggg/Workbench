@@ -1579,14 +1579,44 @@ input:focus, select:focus, textarea:focus, button:focus-visible {
 
 .catalog-card > .empty { padding: 8px 18px 22px; }
 
-/* 扫盘路径那一块：整行一个输入框，留白跟卡片里其它行对齐
-   （.form-grid 默认是两列，这里只有一个，得显式占满，不然只占左半边） */
-.scan-roots-grid {
-  grid-template-columns: 1fr;
+/* 扫盘根目录：一行输入 + 浏览/添加，下面是已添加的列表 */
+.scan-roots-edit {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   padding: 0 var(--space-5) var(--space-3);
 }
 
-.scan-actions { padding: 0 var(--space-5) var(--space-4); }
+.scan-roots-edit input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+/* 按钮比输入框矮几像素，不设 flex: none 的话窄屏下会被压扁 */
+.scan-roots-edit .btn { flex: none; }
+
+.scan-root-list {
+  display: flex;
+  flex-direction: column;
+  padding: 0 var(--space-5) var(--space-3);
+}
+
+.scan-root-list .sub { margin: 0; }
+
+.scan-root-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  border-top: 1px solid var(--line);
+  padding: 5px 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.scan-root-item .linkish { flex: none; color: var(--danger); }
 
 /* 扫盘结果的可视化：概览三数 → 规格分布（可展开）→ SN 明细分页 */
 .scan-overview {
@@ -1620,41 +1650,6 @@ input:focus, select:focus, textarea:focus, button:focus-visible {
 .scan-root-row.is-empty { color: var(--danger); }
 
 .scan-root-path { overflow-wrap: anywhere; }
-
-.scan-specs { display: flex; flex-direction: column; }
-
-.scan-tree-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-3);
-  width: 100%;
-  border: 0;
-  border-top: 1px solid var(--line);
-  background: none;
-  padding: 6px 0;
-  text-align: left;
-  font-size: var(--text-md);
-}
-
-.scan-tree-row:hover { color: var(--accent); }
-
-.scan-tree-children {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  padding: 0 0 var(--space-3);
-}
-
-.scan-tree-leaf {
-  border: 1px solid var(--line-strong);
-  background: var(--surface);
-  border-radius: var(--radius-sm);
-  padding: 4px 10px;
-  font-size: var(--text-sm);
-}
-
-.scan-tree-leaf:hover { border-color: var(--accent); color: var(--accent); }
 
 .scan-warn {
   margin: 0 var(--space-5) var(--space-3);
@@ -3975,6 +3970,9 @@ body.is-busy .code-main { box-shadow: var(--card-shadow), inset 0 0 0 1px var(--
 /* ===== 剪贴板页 ===== */
 
 .clip-list .empty { padding: var(--space-4) var(--space-3); }
+
+/* 分页条就贴在最后一行下面，那一行已经有下边框了，这里不再画一条（免得两条线并排） */
+.clip-list .list-pager { border-top: 0; }
 
 .clip-row {
   display: flex;

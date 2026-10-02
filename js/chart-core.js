@@ -61,10 +61,11 @@
 
   const QUAL_PATTERN = QUALITY_SUFFIXES.map(escapeRe).join("|");
   // 扫描用：前缀/后缀排除字母数字与 =，根音必须大写，避免误吃英文单词
+  // 升降号允许写在字母前面（#Fm、bB）——从网上抄来的谱子常这么排
   const TOKEN_RE = new RegExp(
-    "(?<![A-Za-z0-9=])[A-G][#b]?(?:" + QUAL_PATTERN + ")?(?:/[A-G][#b]?)?(?![A-Za-z0-9=])", "g");
+    "(?<![A-Za-z0-9=])[#b]?[A-G][#b]?(?:" + QUAL_PATTERN + ")?(?:/[A-G][#b]?)?(?![A-Za-z0-9=])", "g");
   // 校验用：整串锚定
-  const FULL_TOKEN_RE = new RegExp("^([A-G])([#b]?)(" + QUAL_PATTERN + ")?(/[A-G][#b]?)?$");
+  const FULL_TOKEN_RE = new RegExp("^([#b]?)([A-G])([#b]?)(" + QUAL_PATTERN + ")?(/[A-G][#b]?)?$");
 
   function makeChord(rootSemitone, qualityIndex, bassSemitone) {
     return {
@@ -80,18 +81,32 @@
     if (!token) return null;
     const m = FULL_TOKEN_RE.exec(token);
     if (!m) return null;
-    const root = parseNote(m[1] + (m[2] || ""));
+    // parseNote 只认「字母在前」的写法，所以把前置升降号搬到后面再解析：#F → F#
+    const root = parseNote(m[2] + m[3] + m[1]);
     if (root == null) return null;
-    const quality = QUALITY_ALIAS[m[3] || ""];
+    const quality = QUALITY_ALIAS[m[4] || ""];
     let bass = null;
-    if (m[4]) {
-      bass = parseNote(m[4].slice(1));
+    if (m[5]) {
+      bass = parseNote(m[5].slice(1));
       if (bass == null) return null;
     }
     return makeChord(root, quality == null ? 0 : quality, bass);
   }
 
   function isValidChord(text) { return !!parseChord(text); }
+
+  // 谱子从别处抄来时写法五花八门：升降号写在字母前（#Fm）、后缀用别名（min7、sus、「°」）。
+  // 这里统一成规范写法：升降号一律跟在字母后（#Fm → F#m），后缀用标准名（min7 → m7、
+  // sus → sus4、° → dim、maj 直接省掉）。音高和和弦品质不变，只是「怎么写」。
+  // 认不出来（不是合法和弦）就原样返回，不碰歌词里的普通单词。
+  function canonicalChordText(text) {
+    const token = String(text == null ? "" : text).trim();
+    if (!parseChord(token)) return token;
+    const m = FULL_TOKEN_RE.exec(token);
+    const accidental = m[1] || m[3] || "";
+    const quality = QUALITY_ALIAS[m[4] || ""];
+    return m[2] + accidental + QUALITIES[quality == null ? 0 : quality][0] + (m[5] || "");
+  }
 
   function chordName(chord, useSharps) {
     const base = noteName(chord.root, useSharps) + QUALITIES[chord.quality][0];
@@ -168,9 +183,13 @@
     return tokens;
   }
 
-  // 覆盖率 = 和弦占用的字符数 / 非空白字符数；≥ 0.8 才算「纯和弦行」
+  // 覆盖率 = 和弦占用的字符数 / 非空白字符数；≥ 0.8 才算「纯和弦行」。
+  // G(3)、A(5) 这类指法标记不是和弦、也解析不了，不能让它把整行拖成歌词，先从分母里剔掉
   function coverageRatio(line, tokens) {
-    const total = String(line == null ? "" : line).replace(/\s/g, "").length;
+    const total = String(line == null ? "" : line)
+      .replace(/\s/g, "")
+      .replace(/\(\d+\)/g, "")
+      .length;
     if (!total) return 0;
     return tokens.reduce((sum, token) => sum + token.length, 0) / total;
   }
@@ -193,6 +212,7 @@
     makeChord: makeChord,
     parseChord: parseChord,
     isValidChord: isValidChord,
+    canonicalChordText: canonicalChordText,
     chordName: chordName,
     chordTones: chordTones,
     blackKeyToneCount: blackKeyToneCount,

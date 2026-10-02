@@ -8,7 +8,16 @@
       search(document.getElementById("sn-input").value);
     });
     document.getElementById("scan-run").addEventListener("click", startScan);
-    document.getElementById("scan-save").addEventListener("click", saveScanRoots);
+    document.getElementById("scan-root-add").addEventListener("click", addRoot);
+    document.getElementById("scan-root-browse").addEventListener("click", browseRoot);
+    document.getElementById("scan-root-input").addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      addRoot();
+    });
+    // 换了 Spec 要先把 PN 下拉重填（只列这个规格下的 PN），再刷新明细
+    document.getElementById("scan-filter-spec").addEventListener("change", onSpecChange);
+    document.getElementById("scan-filter-pn").addEventListener("change", onFilterChange);
     await loadScanRoots();
     // 一进来就把上次扫到的结果显示出来——服务没重启的话索引还在内存里，
     // 快照也在盘上，不该只有点过「更新路径」才看得见
@@ -102,23 +111,56 @@
     }
   }
 
+  // 根目录：逐条添加（粘贴 UNC 路径，或点「浏览…」选文件夹），增删后即时保存
+  let roots = [];
+
   async function loadScanRoots() {
-    const area = document.getElementById("scan-roots");
     try {
       const response = await fetch(HOST + "/catalog/roots", { cache: "no-store" });
       if (!response.ok) throw new Error("读取失败");
       const data = await response.json();
-      area.value = (data.roots || []).join("\n");
-      paintScanStatus(data.roots);
+      roots = data.roots || [];
+      renderRoots();
+      paintScanStatus(roots);
     } catch (err) {
-      area.value = "";
+      roots = [];
+      renderRoots();
       document.getElementById("scan-status").textContent = "根目录读不到。请先双击「打开工作台」。";
     }
   }
 
+  function renderRoots() {
+    const box = document.getElementById("scan-root-list");
+    box.innerHTML = "";
+    if (!roots.length) {
+      const empty = document.createElement("p");
+      empty.className = "sub";
+      empty.textContent = "还没有根目录。";
+      box.append(empty);
+      return;
+    }
+    roots.forEach((root, index) => {
+      const row = document.createElement("div");
+      row.className = "scan-root-item";
+      const path = document.createElement("span");
+      path.className = "scan-root-path";
+      path.textContent = root;
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "linkish";
+      remove.textContent = "删除";
+      remove.addEventListener("click", () => {
+        roots.splice(index, 1);
+        renderRoots();
+        saveScanRoots();
+      });
+      row.append(path, remove);
+      box.append(row);
+    });
+  }
+
   async function saveScanRoots() {
-    const area = document.getElementById("scan-roots");
-    const roots = area.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    paintScanStatus(roots);
     try {
       const response = await fetch(HOST + "/catalog/roots", {
         method: "POST",
@@ -126,10 +168,40 @@
         body: JSON.stringify({ roots: roots })
       });
       if (!response.ok) throw new Error((await response.text()) || "保存失败");
-      Nav.toast(roots.length ? "已保存 " + roots.length + " 个根目录" : "已清空根目录");
-      paintScanStatus(roots);
     } catch (err) {
-      Nav.toast("保存失败：" + err.message);
+      Nav.toast("根目录没保存上：" + err.message);
+    }
+  }
+
+  function addRoot() {
+    const input = document.getElementById("scan-root-input");
+    const value = input.value.trim();
+    if (!value) return;
+    if (roots.indexOf(value) >= 0) {
+      Nav.toast("这个根目录已经在列表里了");
+      return;
+    }
+    roots.push(value);
+    input.value = "";
+    renderRoots();
+    saveScanRoots();
+  }
+
+  // 弹系统的文件夹选择框（服务端 mode=dir），网络共享也能一路点进去
+  async function browseRoot() {
+    try {
+      const response = await fetch(HOST + "/pick-file", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "dir", title: "选择产品数据根目录" })
+      });
+      if (!response.ok) throw new Error("打开失败");
+      const data = await response.json();
+      if (!data || data.cancelled || !data.path) return;
+      document.getElementById("scan-root-input").value = data.path;
+      addRoot();   // 选完直接加进去，省一步点「添加」
+    } catch (err) {
+      Nav.toast("没能打开选择框。请先双击「打开工作台」。");
     }
   }
 
@@ -240,63 +312,68 @@
     warn.textContent = problems.join("；");
     warn.hidden = problems.length === 0;
 
-    renderSpecs(data.specs || []);
+    fillSpecFilter(data.specs || []);
   }
 
-  function renderSpecs(specs) {
-    const box = document.getElementById("scan-specs");
-    box.innerHTML = "";
-    if (!specs.length) {
-      box.hidden = true;
-      return;
-    }
-    box.hidden = false;
+  // Spec 下拉：全部 + 每个规格（带 SN 条数）
+  function fillSpecFilter(specs) {
+    const select = document.getElementById("scan-filter-spec");
+    const keep = select.value;
+    select.innerHTML = "";
+    const all = document.createElement("option");
+    all.value = "";
+    all.textContent = "全部";
+    select.append(all);
     specs.forEach((item) => {
-      const row = document.createElement("button");
-      row.type = "button";
-      row.className = "scan-tree-row";
-      const name = document.createElement("span");
-      name.textContent = item.spec;
-      const meta = document.createElement("span");
-      meta.className = "muted";
-      meta.textContent = item.pnCount + " 个 PN · " + item.snCount + " 个 SN";
-      row.append(name, meta);
-      const holder = document.createElement("div");
-      holder.className = "scan-tree-children";
-      holder.hidden = true;
-      row.addEventListener("click", () => openSpec(item.spec, holder));
-      box.append(row, holder);
+      const option = document.createElement("option");
+      option.value = item.spec;
+      option.textContent = item.spec + "（" + item.snCount + "）";
+      select.append(option);
     });
+    select.value = keep && specs.some((item) => item.spec === keep) ? keep : "";
+    document.getElementById("scan-filter").hidden = specs.length === 0;
+    fillPnFilter(select.value, true);
   }
 
-  async function openSpec(spec, holder) {
-    if (!holder.hidden) {
-      holder.hidden = true;
-      return;
-    }
-    holder.innerHTML = "";
+  // PN 下拉只列当前 Spec 下的；Spec 选「全部」时列出所有 PN
+  async function fillPnFilter(spec, refreshDetail) {
+    const select = document.getElementById("scan-filter-pn");
+    const keep = select.value;
+    select.innerHTML = "";
+    const all = document.createElement("option");
+    all.value = "";
+    all.textContent = "全部";
+    select.append(all);
     try {
       const response = await fetch(
-        HOST + "/catalog/list?spec=" + encodeURIComponent(spec) + "&level=pn", { cache: "no-store" });
-      if (!response.ok) throw new Error("读取失败");
-      const data = await response.json();
-      (data.items || []).forEach((item) => {
-        const leaf = document.createElement("button");
-        leaf.type = "button";
-        leaf.className = "scan-tree-leaf";
-        leaf.textContent = item.pn + "（" + item.count + "）";
-        leaf.addEventListener("click", () => openPn(spec, item.pn));
-        holder.append(leaf);
-      });
-      holder.hidden = false;
+        HOST + "/catalog/list?spec=" + encodeURIComponent(spec || "") + "&level=pn", { cache: "no-store" });
+      if (response.ok) {
+        const data = await response.json();
+        (data.items || []).forEach((item) => {
+          const option = document.createElement("option");
+          option.value = item.pn;
+          option.textContent = item.pn + "（" + item.count + "）";
+          select.append(option);
+        });
+      }
     } catch (err) {
-      Nav.toast("没读出这个 Spec 下的 PN");
+      /* 拉不到就只剩「全部」，明细照旧能列 */
     }
+    const stillThere = Array.prototype.some.call(select.options, (option) => option.value === keep);
+    select.value = keep && stillThere ? keep : "";
+    if (refreshDetail) onFilterChange();
   }
 
-  async function openPn(spec, pn) {
-    detail = { spec: spec, pn: pn, offset: 0, limit: 100, total: 0 };
-    await loadDetail();
+  async function onSpecChange() {
+    await fillPnFilter(document.getElementById("scan-filter-spec").value, false);
+    onFilterChange();
+  }
+
+  function onFilterChange() {
+    detail.spec = document.getElementById("scan-filter-spec").value;
+    detail.pn = document.getElementById("scan-filter-pn").value;
+    detail.offset = 0;
+    loadDetail();
   }
 
   async function loadDetail() {
@@ -310,7 +387,8 @@
       if (!response.ok) throw new Error("读取失败");
       const data = await response.json();
       detail.total = data.total || 0;
-      document.getElementById("scan-detail-title").textContent = detail.pn + " 共 " + detail.total + " 个";
+      const scope = detail.pn || detail.spec || "全部";
+      document.getElementById("scan-detail-title").textContent = scope + " 共 " + detail.total + " 个";
       body.innerHTML = "";
       (data.items || []).forEach((item) => {
         const tr = document.createElement("tr");

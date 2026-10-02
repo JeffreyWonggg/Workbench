@@ -48,7 +48,7 @@
   <dialog id="chart-editor" class="code-dialog chart-dialog">
     <form id="chart-form">
       <h2 id="chart-editor-title">新增歌曲</h2>
-      <p class="sub">和弦行写在歌词行上方，用空格对齐；也支持「[C]歌词」这类内联写法和粘贴清洗。</p>
+      <p class="sub">和弦行写在歌词行上方、用空格对齐，位置就对上了。段落标题单独一行，写成 [主歌] 这样。</p>
       <div class="form-grid">
         <label>
           <span>歌名</span>
@@ -65,10 +65,6 @@
       </div>
 
       <div class="chart-toolbar">
-        <button type="button" id="chart-paste" class="btn">粘贴清洗</button>
-        <button type="button" id="chart-format" class="btn">对齐格式化</button>
-        <button type="button" id="chart-recommend" class="btn">推荐调</button>
-        <span class="chart-tool-sep"></span>
         <label class="chart-volume">
           <span class="muted">音量</span>
           <input id="chart-volume" type="range" min="0" max="100" step="5" value="80">

@@ -55,20 +55,27 @@
             </div>
             <button type="button" id="scan-run" class="btn primary">更新路径</button>
           </div>
-          <div class="form-grid scan-roots-grid">
-            <label class="wide">
-              <span>根目录（每行一个，按 根目录\spec\PN\SN 三级扫描）</span>
-              <textarea id="scan-roots" rows="3" spellcheck="false" placeholder="\\server\share\root"></textarea>
-            </label>
+          <div class="scan-roots-edit">
+            <input id="scan-root-input" type="text" spellcheck="false" autocomplete="off"
+                   placeholder="\\server\share\root 或 D:\data，回车添加">
+            <button type="button" id="scan-root-browse" class="btn">浏览…</button>
+            <button type="button" id="scan-root-add" class="btn">添加</button>
           </div>
-          <div class="dialog-actions scan-actions">
-            <button type="button" id="scan-save" class="btn">保存根目录</button>
-          </div>
+          <div id="scan-root-list" class="scan-root-list"></div>
           <div id="scan-warn" class="scan-warn" hidden></div>
           <div id="scan-overview" class="scan-overview" hidden>
             <div class="scan-stats" id="scan-stats"></div>
             <div id="scan-roots-stat" class="scan-roots-stat"></div>
-            <div id="scan-specs" class="scan-specs" hidden></div>
+          </div>
+          <div id="scan-filter" class="catalog-filters" hidden>
+            <label>
+              <span>Spec</span>
+              <select id="scan-filter-spec"></select>
+            </label>
+            <label>
+              <span>PN</span>
+              <select id="scan-filter-pn"></select>
+            </label>
           </div>
           <div id="scan-detail" class="scan-detail" hidden>
             <div class="scan-detail-head">

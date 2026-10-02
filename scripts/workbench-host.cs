@@ -274,6 +274,18 @@ sealed class WorkbenchHost {
         return;
       }
 
+      // 清空剪贴板历史。必须在服务端做：历史在它内存里也存着一份，
+      // 光删文件的话，下次复制时 SaveClipHistory 会把内存里那些原样写回来。
+      if (string.Equals(request.HttpMethod, "POST", StringComparison.OrdinalIgnoreCase) &&
+          string.Equals(request.Url.AbsolutePath, "/clipboard/clear", StringComparison.OrdinalIgnoreCase)) {
+        if (!ownOrigin) {
+          Send(response, 403, "text/plain", "forbidden");
+          return;
+        }
+        Send(response, 200, "application/json", ClearClipHistoryJson());
+        return;
+      }
+
       // 通用工具启动：exe 路径来自 meta.json 的 tools 字段，改工具不必重新编译服务端
       if (string.Equals(request.HttpMethod, "POST", StringComparison.OrdinalIgnoreCase) &&
           string.Equals(request.Url.AbsolutePath, "/run-tool", StringComparison.OrdinalIgnoreCase)) {
@@ -1469,6 +1481,9 @@ sealed class WorkbenchHost {
     { "discard",       new string[] { "checkout", "--", "{paths}" } },
     { "commit",        new string[] { "commit", "-F", "{msgfile}" } },
     { "commit-amend",  new string[] { "commit", "--amend", "-F", "{msgfile}" } },
+    // 改写上一条但不动说明（页面里说明留空时走这条）：--no-edit 保留原提交消息，
+    // 只把当前暂存区并进去。少了它就只能用 -F 覆盖，等于把原来的说明抹掉。
+    { "commit-amend-keep", new string[] { "commit", "--amend", "--no-edit" } },
     { "checkout",      new string[] { "checkout", "{ref}" } },
     { "branch-new",    new string[] { "checkout", "-b", "{name}" } },
     { "branch-delete", new string[] { "branch", "-d", "{name}" } },
@@ -3183,7 +3198,9 @@ sealed class WorkbenchHost {
 
   // ===== 剪贴板历史：Alt+Q 上一条，Alt+E 下一条，JSON 存在工作台根目录 =====
 
-  const int ClipMaxItems = 80;
+  // 历史最多留这么多条。插入新记录时插到最前，超出就把末尾（最老）的丢掉。
+  // 剪贴板页每页显示 20 条，条数上限跟着这里走。
+  const int ClipMaxItems = 200;
   const int ClipMaxChars = 16 * 1024;
   static readonly string ClipHistoryPath = Path.Combine(Root, "clipboard-history.json");
   static readonly List<ClipItem> clipItems = new List<ClipItem>();
@@ -3269,6 +3286,20 @@ sealed class WorkbenchHost {
     } catch (Exception) { }
     finally {
       clipSaving = false;
+    }
+  }
+
+  // 清空历史：内存和文件一起清，并把「下一条」的游标归零。
+  // 清完顺手写一份空历史落盘，这样 updatedAt 也会刷新，页面读到的是「刚清空」的状态。
+  static string ClearClipHistoryJson() {
+    try {
+      clipItems.Clear();
+      clipIndex = 0;
+      clipArmed = false;
+      SaveClipHistory();
+      return "{\"ok\":true}";
+    } catch (Exception ex) {
+      return "{\"ok\":false,\"error\":\"" + JsonEscape(ex.Message) + "\"}";
     }
   }
 

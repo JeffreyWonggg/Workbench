@@ -1,5 +1,5 @@
-/* 记谱核心 C：推荐调 / 和弦补全 / 马尔可夫预测。
-   对照 Qt src/core 的 KeyRecommender、ChordAutocomplete、MarkovChordPredictor 与
+/* 记谱核心 C：推荐调 / 和弦补全。
+   对照 Qt src/core 的 KeyRecommender、ChordAutocomplete 与
    data/chord_progressions.json 重写。 */
 (function (root) {
   "use strict";
@@ -46,96 +46,12 @@
     [1, 5, 6, 4], [6, 4, 1, 5], [1, 4, 5], [1, 5, 6, 3, 4, 1, 4, 5], [2, 5, 1], [1, 6, 2, 5]
   ];
 
-  // 离线语料：[度数, 是否大调, 权重]
-  const CORPUS = [
-    [[1, 5, 6, 4], 1, 3], [[6, 4, 1, 5], 1, 3], [[1, 6, 4, 5], 1, 2],
-    [[1, 5, 6, 4, 1, 4, 5], 1, 2], [[1, 5, 6, 3, 4, 1, 4, 5], 1, 2], [[1, 4, 6, 5], 1, 2],
-    [[1, 6, 5, 4], 1, 2], [[4, 1, 5, 6], 1, 2], [[1, 5, 6, 4, 5, 1], 1, 2], [[1, 3, 6, 4], 1, 2],
-    [[1, 3, 4, 1], 1, 2], [[1, 6, 2, 5], 1, 2], [[3, 6, 2, 5], 1, 2], [[6, 2, 5, 1], 1, 2],
-    [[2, 5, 1], 1, 3], [[1, 6, 2, 5, 1], 1, 1], [[1, 4, 7, 3, 6, 2, 5, 1], 1, 1],
-    [[1, 6, 7, 3, 6, 2, 5, 1], 1, 1], [[1, 4, 1, 5], 1, 2], [[1, 4, 5], 1, 3],
-    [[5, 1], 1, 2], [[4, 5, 1], 1, 2], [[1, 4, 5, 4], 1, 2], [[1, 2, 5, 1], 1, 1],
-    [[1, 5, 1, 4], 1, 1], [[5, 4, 1, 5], 1, 1], [[1, 5, 1, 5], 1, 1], [[1, 5, 3, 6, 4, 5, 1], 1, 1],
-    [[1, 4, 5, 1], 0, 3], [[1, 6, 7], 0, 3], [[1, 7, 6, 7], 0, 2], [[1, 6, 3, 7], 0, 2],
-    [[1, 3, 6, 7], 0, 2], [[1, 5, 6, 7], 0, 2], [[1, 4, 5, 4], 0, 2], [[1, 4, 7, 6], 0, 1],
-    [[1, 7, 1, 4], 0, 1], [[1, 6, 1, 6], 0, 1], [[1, 4, 5, 6], 0, 1], [[1, 4, 3, 6, 7], 0, 1],
-    [[1, 4, 7, 3, 6, 7], 0, 1], [[1, 2, 7, 6], 0, 1], [[6, 3, 7, 6], 0, 1],
-    [[1, -7, 4, 1], 1, 2], [[1, -7, -6, -7], 1, 2], [[1, -3, -7, 4], 1, 2],
-    [[1, -3, 4, 5], 1, 1], [[1, -6, 4, 1], 1, 1], [[1, -7, 4, -7], 1, 1], [[1, -2, 4, 1], 1, 1]
-  ];
-
-  // ===== 马尔可夫（三阶优先，二阶回退）=====
-
-  function body() {
-    return { bigrams: new Map(), trigrams: new Map() };
-  }
-
-  function bump(table, key, next, weight) {
-    let row = table.get(key);
-    if (!row) { row = new Map(); table.set(key, row); }
-    row.set(next, (row.get(next) || 0) + weight);
-  }
-
-  function learn(model, sequence, weight) {
-    for (let i = 0; i + 1 < sequence.length; i++) {
-      bump(model.bigrams, sequence[i], sequence[i + 1], weight);
-      if (i + 2 < sequence.length) {
-        bump(model.trigrams, sequence[i] + "|" + sequence[i + 1], sequence[i + 2], weight);
-      }
-    }
-  }
-
-  function sortRow(row) {
-    return Array.from(row.entries())
-      .sort((a, b) => b[1] - a[1] || Number(a[0].split(":")[0]) - Number(b[0].split(":")[0]))
-      .map((entry) => entry[0]);
-  }
-
-  function nextOf(model, prev, last) {
-    const tri = prev == null ? null : model.trigrams.get(prev + "|" + last);
-    if (tri) return sortRow(tri);
-    const bi = model.bigrams.get(last);
-    return bi ? sortRow(bi) : [];
-  }
-
-  function findPrevious(sequence, last) {
-    let prev = null;
-    for (let i = 0; i < sequence.length; i++) {
-      const chord = Core.parseChord(sequence[i]);
-      if (chord && Core.chordKey(chord) === last) return prev;
-      if (chord) prev = Core.chordKey(chord);
-    }
-    return null;
-  }
-
-  // 输出接下来最可能的和弦名，用当前调的拼写
-  function predictNext(observed, lastName, key, count) {
-    const last = Core.parseChord(lastName);
-    const limit = count || 5;
-    if (!last) return [];
-    const model = body();
-    const mode = CORPUS.filter((item) => !!item[1] === !!key.major);
-    const source = mode.length > 0 ? mode : PROGRESSIONS.map((item) => [item, 1, 1]);
-    source.forEach((item) => {
-      const sequence = item[0].map((degree) => Core.chordKey(chordFromDegree(key, degree)));
-      if (sequence.length >= 2) learn(model, sequence, item[2]);
-    });
-    const parsed = (observed || []).map((name) => Core.parseChord(name)).filter(Boolean);
-    if (parsed.length >= 2) learn(model, parsed.map(Core.chordKey), 3.0);
-    const prev = findPrevious(observed || [], Core.chordKey(last));
-    return nextOf(model, prev, Core.chordKey(last)).slice(0, limit).map((id) => {
-      const parts = id.split(":");
-      return Core.chordName(Core.makeChord(Number(parts[0]), Number(parts[1]), null), key.useSharps);
-    });
-  }
-
   // ===== 和弦补全 =====
 
   const POOL_QUALITIES = [0, 1, 8, 6, 7, 5, 4, 2, 3, 13, 14, 15, 16, 17, 20];
 
   function suggest(chords, key, options) {
     const opts = options || {};
-    const used = chords || [];
     const prefix = String(opts.prefix || "").trim().toLowerCase();
     const favorites = (opts.favorites || []).map((name) => String(name).trim().toLowerCase());
     const current = String(opts.current || "").trim();
@@ -174,13 +90,11 @@
       POOL_QUALITIES.forEach((quality) => push(Core.makeChord(semitone, quality, null)));
     }
 
-    const predicted = predictNext(used, current, key, 8).map((name) => name.toLowerCase());
     const mark = (name) => {
       const low = name.toLowerCase();
       return {
         prefix: prefix && !low.startsWith(prefix) ? 1 : 0,
-        favorite: favorites.indexOf(low) >= 0 ? 0 : 1,
-        predicted: predicted.indexOf(low) >= 0 ? 0 : 1
+        favorite: favorites.indexOf(low) >= 0 ? 0 : 1
       };
     };
     const pool = current ? names.filter((name) => name.toLowerCase() !== current.toLowerCase()) : names;
@@ -188,7 +102,6 @@
       .map((name, index) => ({ name: name, index: index, rank: mark(name) }))
       .sort((a, b) => a.rank.prefix - b.rank.prefix
         || a.rank.favorite - b.rank.favorite
-        || a.rank.predicted - b.rank.predicted
         || a.index - b.index)
       .slice(0, limit)
       .map((item) => item.name);
@@ -233,10 +146,8 @@
   root.ChartSuggest = {
     chordFromDegree: chordFromDegree,
     degreeToNote: degreeToNote,
-    predictNext: predictNext,
     suggest: suggest,
     recommendKeys: recommendKeys,
-    PROGRESSIONS: PROGRESSIONS,
-    CORPUS: CORPUS
+    PROGRESSIONS: PROGRESSIONS
   };
 })(typeof window !== "undefined" ? window : globalThis);

@@ -56,14 +56,15 @@
       stateSelect.append(option);
     });
     document.getElementById("todo-date").value = Workbench.todayIso();
-    // 持续天数：填了就自动把截止日期算成「记录日期 + N 天」，不用手填截止日期
+    // 持续天数：填了就自动把截止日期算好，不用手填。
+    // 当天算第 1 天，所以 N 天 = 记录日期 + (N - 1)：填 1 就是当天截止，填 3 是记录当天起算的第 3 天。
     const addDate = document.getElementById("todo-date");
     const addDue = document.getElementById("todo-due");
     const addSpan = document.getElementById("todo-span");
     const syncAddDue = () => {
       const days = Number(addSpan.value);
       if (!Number.isFinite(days) || days < 1) return;
-      const iso = addDays(addDate.value, days);
+      const iso = addDays(addDate.value, days - 1);
       if (iso) addDue.value = iso;
     };
     addSpan.addEventListener("input", syncAddDue);
@@ -436,21 +437,23 @@
     });
     state.value = todo.state;
     const date = field("date", todo.date || "", "记录日期");
-    // 已有记录日期和截止日期时，把当前跨度反算出来显示，方便接着调
+    // 已有记录日期和截止日期时，把当前跨度反算出来显示，方便接着调。
+    // 和上面填的时候一个口径：当天算第 1 天，10-01 到 10-01 是 1 天、到 10-03 是 3 天。
     let spanText = "";
     if (todo.date && todo.due) {
-      const days = diffDays(todo.date, todo.due);
-      if (days > 0) spanText = String(days);
+      const days = diffDays(todo.date, todo.due) + 1;
+      if (days >= 1) spanText = String(days);
     }
     const span = field("number", spanText, "持续天数");
     span.min = "1";
     span.step = "1";
     span.placeholder = "天数";
     const due = field("date", todo.due || "", "截止日期");
+    // 和添加表单同一口径：N 天 = 记录日期 + (N - 1)，填 1 就是当天截止
     const syncEditDue = () => {
       const days = Number(span.value);
       if (!Number.isFinite(days) || days < 1) return;
-      const iso = addDays(date.value, days);
+      const iso = addDays(date.value, days - 1);
       if (iso) due.value = iso;
     };
     span.addEventListener("input", syncEditDue);

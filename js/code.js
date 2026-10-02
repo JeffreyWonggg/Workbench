@@ -39,6 +39,7 @@
     discard: { label: "放弃所选文件的改动", command: "git checkout -- <文件>", danger: true },
     commit: { label: "提交已暂存的改动", command: "git commit -F <说明文件>" },
     "commit-amend": { label: "用当前暂存内容改写上一条提交", command: "git commit --amend -F <说明文件>", danger: true },
+    "commit-amend-keep": { label: "用当前暂存内容改写上一条提交（保留原说明）", command: "git commit --amend --no-edit", danger: true },
     checkout: { label: "切换分支", command: "git checkout <分支>" },
     "branch-new": { label: "新建并切换分支", command: "git checkout -b <分支>" },
     "branch-delete": { label: "删除本地分支", command: "git branch -d <分支>", danger: true },
@@ -902,14 +903,20 @@
     $("diff-body").innerHTML = html || '<span class="d-line d-ctx">没有差异</span>';
   }
 
+  // 提交说明留空不拦着：不少改动没什么好写的，统一记为 N/A，别让人卡在这一步
+  const DEFAULT_COMMIT_MESSAGE = "N/A";
+
   async function doCommit(amend) {
-    const message = $("commit-message").value.trim();
-    if (!message) return Nav.toast("先写提交说明");
+    const typed = $("commit-message").value.trim();
     const status = currentStatus();
     if (status && !amend && status.staged === 0) {
       return Nav.toast("暂存区是空的，先暂存要提交的文件");
     }
-    const result = await runOp(amend ? "commit-amend" : "commit", { message }, {
+    // 「修改上一条」留空是另一回事：照写 N/A 会把上一条的真实说明抹掉，
+    // 所以空说明时走 --no-edit，只把暂存区的内容并进去，原来的消息不动。
+    const keepMessage = amend && !typed;
+    const op = keepMessage ? "commit-amend-keep" : (amend ? "commit-amend" : "commit");
+    const result = await runOp(op, keepMessage ? {} : { message: typed || DEFAULT_COMMIT_MESSAGE }, {
       done: amend ? "已改写上一条提交" : "提交成功",
       confirm: amend,
       title: "改写上一条提交",
