@@ -245,10 +245,48 @@
       const mine = (settings && settings.salt) ? String(settings.salt) : "";
       const theirs = (envelope && envelope.salt) ? String(envelope.salt) : "";
       if (mine && theirs && mine !== theirs) {
-        throw new Error("这份云端数据是用另一把同步密码加密的（来自上一次配置或另一台设备），本机密钥与它不配对：要用它就得输当初那把密码，否则确认本机数据是全的，就按「以本机为准」重建云端");
+        // code 带着这个标记一路走到面板：这种「本机这把钥匙对不上云端」是有专门修法的
+        // （用同步密码重新对上云端），面板要据此把入口显示出来，不能只丢一句文案让用户猜。
+        const mismatch = new Error("这份云端数据是用另一把同步密码加密的（来自上一次配置或另一台设备），本机密钥与它不配对：要用它就得输当初那把密码，否则确认本机数据是全的，就按「以本机为准」重建云端");
+        mismatch.code = "key-mismatch";
+        throw mismatch;
       }
       throw err;
     }
+  }
+
+  // 接上一份别人写的云端数据时用（手机 / 第二台设备第一次配置）。
+  // 盐是跟着密文走的：信封里带着写它时用的那把盐。本机新配置会生成一把新盐，
+  // 跟云端那把对不上——同样的密码也派不出同一把密钥，于是「解不开」会被
+  // download() 和 runSync() 一路当成「云端是空的」，最后按空清单把云端清单覆盖掉。
+  // 这里用用户输的密码 + 云端信封里的盐重派一次密钥，并且当场拿密文验一遍：
+  // 验不过就抛错让调用方中止，绝不带着一把废密钥往下走。
+  async function adoptRemote(password, envelopeText) {
+    if (!password) throw new Error("请先填同步密码");
+    let envelope = null;
+    try {
+      envelope = JSON.parse(envelopeText);
+    } catch (err) {
+      return false;
+    }
+    if (!envelope || !envelope.salt) return false;
+    const nextSettings = {
+      iterations: Number(envelope.iterations) || ITERATIONS,
+      salt: String(envelope.salt)
+    };
+    const candidate = await deriveKey(password, fromBase64(nextSettings.salt), nextSettings.iterations);
+    try {
+      await root.VaultCrypto.decrypt(candidate, envelope);
+    } catch (err) {
+      throw new Error("云端已经有一份数据了，但这把密码解不开它：和当初设置的那个不一样（也可能当初是在别的设备上配的）");
+    }
+    const mine = await config();   // 旧密钥还在，先把本机配置取出来
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(nextSettings));
+    key = candidate;
+    settings = nextSettings;
+    forget();   // 旧密钥包出来的那份已经没用了
+    if (mine) await updateConfig(mine);   // 配置本身也换成新密钥重新封一遍
+    return true;
   }
 
   root.SyncCrypto = {
@@ -265,6 +303,7 @@
     recall,
     hasConfig,
     seal,
-    open
+    open,
+    adoptRemote
   };
 })(typeof window !== "undefined" ? window : globalThis);

@@ -104,9 +104,72 @@
     return PREFIX + "/data/" + String(key).replace(/^\/+/, "");
   }
 
+  // 上一次「防缓存读取通道」失败的原因。probe() 会把它原样报在面板上：
+  // 这条通道失败是静默退回常规下载的，不把原因带出来的话，现象只会是
+  // 「明明加了防缓存，怎么还是要清缓存」。
+  let freshError = "";
+
+  // 取一次签名链接再自己 fetch，唯一目的是能说上一句「这次别用缓存」。
+  // SDK 的 download 内部是「createSignedUrl 拿链接 → GET（headers 写死为空对象）」，
+  // 我们插不进任何头；而同一个 key 的下载链接是稳定复用的，浏览器就把第一次读到的
+  // 响应按 URL 存了下来。于是 index.json 和 data/*.json 每次同步都从缓存里回旧副本，
+  // 且「旧清单配旧数据」哈希自洽，同步引擎一路报「两边本来就一致」/「拉回 N 项」却看不到新内容
+  // （手机端现象：电脑上加了待办怎么同步都不过来，单清一次浏览器缓存立刻就好）。
+  //
+  // 注意这里的两层字段名：app.storage.from(桶) 走的是新版对象接口，
+  // createSignedUrl 返回的是 { data: { fullSignedURL } }（handleOperation 包了一层 data）；
+  // 老版 app.storage 才返回 { data: { signedUrl } }。只认 signedUrl 的话这里恒为空串，
+  // 于是每一轮都静默退回下面那条带缓存的常规下载——防缓存通道等于从来没接上。
+  async function signedUrlOf(api, cloudPath, nonce) {
+    const signed = await api.createSignedUrl(cloudPath, 600, nonce ? { cacheNonce: String(nonce) } : undefined);
+    // shouldThrowOnError 为假时 SDK 不抛错，而是把失败塞在返回值里：这里统一抛出去
+    if (signed && signed.error) {
+      const e = signed.error;
+      throw new Error("取签名链接失败：" + String(e.code || e.name || "") + " " + String(e.message || ""));
+    }
+    const info = (signed && (signed.data || signed)) || {};
+    const url = String(info.fullSignedURL || info.signedUrl || info.downloadUrl || "");
+    if (!url) throw new Error("签名链接里没有 URL（返回字段：" + Object.keys(info).join(",") + "）");
+    return url;
+  }
+
+  async function tryFresh(api, cloudPath, nonce) {
+    const url = await signedUrlOf(api, cloudPath, nonce);
+    const res = await fetch(url, { cache: "no-store", credentials: "omit" });
+    if (!res || !res.ok) throw new Error("取签名链接失败 HTTP " + (res ? res.status : "无响应"));
+    return await res.text();
+  }
+
+  // 拿不到签名链接、跨域被拦、浏览器不支持时一律返回 null，由调用方退回 SDK 的常规下载。
+  async function downloadFresh(api, cloudPath) {
+    if (!api || typeof api.createSignedUrl !== "function") {
+      freshError = "这份 SDK 没有 createSignedUrl";
+      return null;
+    }
+    // cacheNonce 是 SDK 自带的防缓存参数：每轮换一个 URL，按 URL 缓存就必然落空。
+    // 万一服务端不认这个参数，再退回不带它的那种签名链接，别把整条通道一起搭进去。
+    try {
+      const text = await tryFresh(api, cloudPath, Date.now());
+      freshError = "";
+      return text;
+    } catch (err) {
+      freshError = (err && err.message) || String(err);
+    }
+    try {
+      const text = await tryFresh(api, cloudPath, 0);
+      freshError = "";
+      return text;
+    } catch (err) {
+      freshError = (err && err.message) || String(err);
+      return null;
+    }
+  }
+
   async function download(cloudPath) {
     try {
       const api = await ensureStorage();
+      const fresh = await downloadFresh(api, cloudPath);
+      if (fresh != null) return fresh;
       const res = await api.download(cloudPath);
       const blob = res && !res.error ? res.data : null;
       if (!blob) return null;
@@ -123,9 +186,18 @@
     const api = await ensureStorage();
     // upsert：同一个 key 必须能反复重写（清单每次同步都重写一遍），
     // 不带它服务端会回 STORAGE_KEY_ALREADY_EXISTS
+    //
+    // cacheControl 是必须显式声明的，不能省：云存储对象默认不带 Cache-Control，
+    // 浏览器只能按「启发式缓存」处理 GET 响应（按 Last-Modified 推一个过期时间），
+    // 而 workbench/index.json 与 workbench/data/*.json 的 key 是固定的、
+    // 签名下载 URL 在有效期内也复用，于是手机第一次读到的那份就被浏览器按 URL 存住了。
+    // 之后每次同步都命中这份旧副本，且「旧清单 + 旧数据」哈希自洽，
+    // 同步引擎一路报「两边本来就一致」/「拉回 N 项」却永远看不到另一台设备的新内容。
+    // 设成 no-store 后，云端明确表态「这份响应不许缓存」，浏览器与 CDN 才不会自作主张。
     const res = await api.upload(cloudPath, String(text), {
       upsert: true,
-      contentType: "application/json"
+      contentType: "application/json",
+      cacheControl: "no-store, no-cache, must-revalidate"
     });
     if (res && res.error) throw res.error;
     return res;
@@ -239,7 +311,15 @@
           await upload(PROBE_PATH, stamp);
           const back = await download(PROBE_PATH);
           if (back !== stamp) throw new Error("存储桶能写进去但读不回来，检查存储桶的权限策略");
-          return { ok: true, message: "已连上环境 " + config.env + "（存储桶 " + bucketName() + "）" };
+          // 再单独验一次「绕过缓存」这条读通道：它自己取签名链接 + no-store fetch，
+          // 跟 SDK 内置下载是两条路。被浏览器跨域策略拦下时同步仍然可用（会退回常规下载），
+          // 只是又会踩回「手机一直读到旧副本」的老毛病，所以这一项得能在面板上看出来。
+          const api = await ensureStorage();
+          const bypass = await downloadFresh(api, PROBE_PATH);
+          return { ok: true, message: "已连上环境 " + config.env + "（存储桶 " + bucketName() + "）"
+            + "｜防缓存读取通道：" + (bypass === stamp
+              ? "可用"
+              : "不可用（" + (freshError || "原因不明") + "，会退回常规下载，仍可能读到浏览器缓存的旧副本）") };
         } catch (err) {
           return { ok: false, message: explain(err)
             + "｜本次用的环境：" + (config && config.env)

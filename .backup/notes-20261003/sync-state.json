@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "deviceId": "17c626d4",
+  "lastSyncAt": "2026-10-03T07:03:18.154Z",
+  "lastOkAt": "2026-10-03T07:03:18.154Z",
+  "lastError": {
+    "at": "2026-10-03T03:50:00.429Z",
+    "message": "这份云端数据是用另一把同步密码加密的（来自上一次配置或另一台设备），本机密钥与它不配对：要用它就得输当初那把密码，否则确认本机数据是全的，就按「以本机为准」重建云端",
+    "kind": "credential"
+  },
+  "base": {
+    "todos.json": {
+      "rev": 11,
+      "hash": "6389bf27b27c6a23e0116556f366d92e99a50ef3e23758f46f77f942d127bcd3"
+    },
+    "reports.json": {
+      "rev": 1,
+      "hash": "23ff0d4664fe519de28b37c7edc0ee0e5646ae2c5f565f40ac1bd0c15674b864"
+    },
+    "notes.json": {
+      "rev": 1,
+      "hash": "3b4cdc29fcdc7569a0b06546c50e952b662e989af3126146225df8f24121fcd2"
+    },
+    "recipes.json": {
+      "rev": 1,
+      "hash": "22616dad130ac6e526703dca378a319c7807bee08d85c14c3de6b31578fd65cc"
+    },
+    "ledger.json": {
+      "rev": 1,
+      "hash": "dd0938b24b803e8cd5d1166debab67e7b12200b269dbcee44b4e2b5e47e14ef4"
+    },
+    "software.json": {
+      "rev": 1,
+      "hash": "291fb1ddbbfdb46febc72ec2c9b23c6476745fed57de09d95e132e66ba761cc8"
+    },
+    "vault.json": {
+      "rev": 2,
+      "hash": "eb655415380840406b38283c0ac8fa36886d92fd5411fc3df7a622c67163b82d"
+    },
+    "charts.json": {
+      "rev": 1,
+      "hash": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+    },
+    "chart-settings.json": {
+      "rev": 1,
+      "hash": "c6a8836d9594195422ea09bdbaa671056d9e7892a8139bf63265e7c77ddc4748"
+    },
+    "meta.json": {
+      "rev": 1,
+      "hash": "331159c01c45b5c7afefd791bb19ac83ae22970ca6b2c13b93f518d83f68e15b"
+    },
+    "notes/02714188-9f8b-4a6b-8697-9fc405291dda.md": {
+      "rev": 1,
+      "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "notes/27df9961-ed2b-41b8-a6b4-0cd0918e5893.md": {
+      "rev": 1,
+      "hash": "769a445e9c615722eca5c93d0103ee05e36d7c2d3f60772a492a14f2e2df072e"
+    },
+    "notes/3b1ebc32-8099-4296-9d49-aa47dea32245.md": {
+      "rev": 1,
+      "hash": "5ea721499b69fa21574b4c08d4b246905581cd8bcfe48060f5dde0ae0119311e"
+    },
+    "notes/3f10948f-8567-4f2e-b6ab-37526c13f3c7.md": {
+      "rev": 1,
+      "hash": "b7600609b869edd4df77e48b6888ffe92d84df09425225978be9cdd4e670f91b"
+    },
+    "notes/7e4f1f58-84bd-49a8-a4f2-8d4ece07ab32.md": {
+      "rev": 1,
+      "hash": "afa3430b308d30ab0f972b80150f806a2446f233f98ba98020e5b750910bd15b"
+    },
+    "notes/dafcb8b4-9daa-4a4e-99a3-195aa1626608.md": {
+      "rev": 1,
+      "hash": "c76aeccb7f642da2fcb58e0bd41fec098c5f68d6e33538191dedef738ff02f58"
+    }
+  },
+  "conflicts": []
+}

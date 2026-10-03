@@ -2328,6 +2328,19 @@ h2 { font-size: var(--text-lg); }
 
 .sync-health-hint { font-size: var(--text-xs); line-height: 1.55; }
 
+/* 本机密钥对不上云端时的补救块：重输同步密码 → 重新派密钥 → 再选方向 */
+.sync-realign {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  background: var(--hover);
+}
+
+.sync-realign-head { color: var(--danger); font-size: var(--text-sm); font-weight: 600; }
+
 /* 同步范围：哪些数据会上云、各自现在什么状态 */
 .sync-scope {
   display: flex;
@@ -2406,6 +2419,15 @@ h2 { font-size: var(--text-lg); }
 .sync-note.is-error { color: var(--danger); }
 .sync-note.is-ok { color: var(--ok); }
 .sync-note.is-info { color: var(--muted); }
+
+/* 面板底部的构建戳：用来核对这台设备跑的到底是不是最新代码 */
+.sync-build {
+  margin: 0;
+  padding-top: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--muted);
+  opacity: .75;
+}
 
 .sync-conflicts,
 .sync-qr {

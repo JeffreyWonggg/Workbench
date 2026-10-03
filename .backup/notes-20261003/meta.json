@@ -1,0 +1,32 @@
+{
+  "projects": [
+    "DD2J",
+    "M120",
+    "DC24",
+    "N/A",
+    "GFF",
+    "LP OTDR",
+    "HP OTDR",
+    "出差"
+  ],
+  "lastWeek": {
+    "year": 2026,
+    "week": 40
+  },
+  "tools": [],
+  "git": {
+    "roots": [
+      "D:\\Desktop\\Workbench"
+    ],
+    "repos": [
+      {
+        "path": "D:\\Desktop\\Workbench",
+        "name": "Workbench",
+        "project": ""
+      }
+    ],
+    "releases": []
+  },
+  "recipesSeeded": true,
+  "shortcuts": []
+}

@@ -1,0 +1,39 @@
+[
+  {
+    "year": 2026,
+    "week": 40,
+    "sections": [
+      {
+        "project": "N/A",
+        "hours": 0,
+        "items": [
+          "在Compass上申请信用卡",
+          "申请信用卡"
+        ]
+      },
+      {
+        "project": "LP OTDR",
+        "hours": 0,
+        "items": [
+          "特殊功能测试1增加两个Distance参数"
+        ]
+      },
+      {
+        "project": "DD2J",
+        "hours": 0,
+        "items": [
+          "会议讨论Locker定标LUT结果"
+        ]
+      },
+      {
+        "project": "出差",
+        "hours": 0,
+        "items": [
+          "OA申请出差、修改行程表"
+        ]
+      }
+    ],
+    "spanDays": 7,
+    "endDate": "2026-10-04"
+  }
+]

@@ -1,0 +1,50 @@
+[
+  {
+    "id": "e0cd3f74-d003-48b1-99fd-9fea863422b4",
+    "date": "2026-10-01",
+    "kind": "expense",
+    "amount": 2131,
+    "category": "21312",
+    "project": "",
+    "note": "123",
+    "createdAt": "2026-10-01T08:05:28.189Z",
+    "updatedAt": "2026-10-01T08:05:36.782Z",
+    "deletedAt": "2026-10-01T08:05:36.782Z"
+  },
+  {
+    "id": "3ee1e983-5243-42b4-a99f-e59f9050fe2d",
+    "date": "2026-10-01",
+    "kind": "expense",
+    "amount": 123,
+    "category": "人情",
+    "project": "HP OTDR",
+    "note": "123",
+    "createdAt": "2026-10-01T08:05:46.251Z",
+    "updatedAt": "2026-10-01T08:40:16.412Z",
+    "deletedAt": "2026-10-01T08:40:16.412Z"
+  },
+  {
+    "id": "3e62aa79-ef00-4040-9e77-df2b1a6b3730",
+    "date": "2026-10-02",
+    "kind": "expense",
+    "amount": 35,
+    "category": "餐饮",
+    "project": "",
+    "note": "中午吃饭",
+    "createdAt": "2026-10-02T09:50:10.465Z",
+    "updatedAt": "2026-10-02T09:50:12.746Z",
+    "deletedAt": "2026-10-02T09:50:12.746Z"
+  },
+  {
+    "id": "ea5a2d41-1e3d-4f10-80ab-3ec8038478ae",
+    "date": "2026-10-03",
+    "kind": "expense",
+    "amount": 100,
+    "category": "交通",
+    "project": "",
+    "note": "打车",
+    "createdAt": "2026-10-03T03:03:09.543Z",
+    "updatedAt": "2026-10-03T03:03:09.543Z",
+    "deletedAt": ""
+  }
+]

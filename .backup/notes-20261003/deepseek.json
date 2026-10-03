@@ -1,0 +1,12 @@
+{
+  "version": 3,
+  "currency": "CNY",
+  "last": {
+    "at": "2026-10-03T07:00:52.061Z",
+    "currency": "CNY",
+    "total": "6.98",
+    "granted": "0.00",
+    "toppedUp": "6.98",
+    "isAvailable": true
+  }
+}

@@ -31,10 +31,14 @@
   let running = false;
   let timer = null;
   let listeners = [];
+  let attachedVisible = false;   // 「回到页面时补一次同步」的监听只挂一次
 
   const status = {
     state: "off",        // off 未配置 / locked 待解锁 / syncing / ok / dirty / error
     message: "",
+    // 失败时的机器可读标记：目前只有 key-mismatch（本机这把密钥对不上云端那份密文）。
+    // 面板靠它把「用同步密码对上云端」的入口显示出来，不用去猜文案。
+    code: "",
     lastSyncAt: "",
     pending: 0,
     conflicts: 0,
@@ -248,6 +252,31 @@
     await root.Workbench.writeText(path, text);
   }
 
+  // 拉取落地之后，拿「本机重新读回来的内容」跟「云端条目声明的 hash」对一次，
+  // 对得上才返回哈希，对不上返回 null。
+  //
+  // 这一步是这台设备会不会「假装同步成功」的分水岭：基准里的 hash 记的是本机读回来的那份，
+  // 以前不管落地成没成，都把新 rev 一起记进去。于是只要有一次落地没生效（写没进去、
+  // 或者下载拿到的是缓存里的旧密文），这台设备就被钉死在「rev 最新、内容却是旧的」上——
+  // 之后每一轮都算「没变化」，面板一直显示「已同步 / 云端不领先」，用户却永远看不到
+  // 另一台设备新加的东西（手机端就是这么拿着 4.2 KB 的旧待办，对着 7.6 KB 的云端说已同步）。
+  // 宁可返回 null：基准不动 = 下一轮还会再拉一次，问题不会被这份坏基准永久掩盖。
+  async function landedHash(path, expected) {
+    const back = await unitText(path);
+    const hash = back == null ? null : await sha256(back);
+    if (expected && hash !== expected) return null;
+    return hash;
+  }
+
+  // 上面那种情况给一句人话。它最容易被当成「同步好了」——面板一切正常，数据却是旧的，
+  // 所以要说清楚本机这份没被动过，以及下一轮还会再试。
+  function staleMessage(paths) {
+    if (!paths || !paths.length) return "";
+    return paths.length + " 项从云端拉下来了，却没能在本机落地（" +
+      paths.slice(0, 3).join("、") + (paths.length > 3 ? " 等" : "") +
+      "）：本机这一份保持原样，下次同步会再试";
+  }
+
   async function applyMeta(text) {
     const incoming = JSON.parse(text);
     const current = await root.Workbench.readText(META_UNIT);
@@ -269,6 +298,12 @@
   }
 
   /* ===== 冲突副本 ===== */
+
+  // 默认值那种空壳：合并 / 覆盖时不算「有内容」，不用为它留副本
+  function isBlankUnit(text) {
+    const trimmed = String(text == null ? "" : text).trim();
+    return trimmed === "" || trimmed === "[]" || trimmed === "{}";
+  }
 
   async function saveConflict(path, text, fromDevice) {
     const at = new Date().toISOString();
@@ -350,19 +385,37 @@
       setStatus({ state: "off", message: "" });
       return { ok: false, message: "未配置" };
     }
+    // 本机没有可读写的落点时同步无从谈起：读第一个本地文件就是空指针。
+    // 与其把崩溃原文丢进「最近一次失败」，不如说清楚缺的是什么。
+    if (!root.Workbench || !root.Workbench.fs) {
+      const message = "本机还没接上数据文件夹，先到「设置」里选一个";
+      setStatus({ state: "off", message });
+      return { ok: false, message };
+    }
     if (!root.SyncCrypto.isUnlocked()) {
       setStatus({ state: "locked", message: "" });
       return { ok: false, message: "待解锁" };
     }
-    if (running) return { ok: false, message: "正在同步" };
+    // 手动同步（force）撞上正在跑的那一轮时——典型是刚进页面时的预热同步——
+    // 直接返回「正在同步」等于把这次点击丢掉。旧的面板又不看返回值，照样报
+    // 「已按云端内容覆盖本机」，看着成功、实际一个字都没拉，这种最难查。
+    // 所以这里等它跑完再跑自己这一轮；只有非手动的那些路（预热 / 写完待推）才照旧让位。
+    if (running) {
+      if (!opts.force) return { ok: false, message: "正在同步" };
+      const deadline = Date.now() + 20000;
+      while (running && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 120));
+      }
+      if (running) return { ok: false, message: "正在同步" };
+    }
     running = true;
-    setStatus({ state: "syncing", message: "" });
+    setStatus({ state: "syncing", message: "", code: "" });
     try {
       await loadState();
       if (opts.force) state.base = {};
       // 只有 attach 那一路带 idle 标记；手动点同步、写完待推、解锁后那几种照常走，不会漏掉改动
       if (opts.idle && !opts.force && justSynced()) {
-        setStatus({ state: "ok", message: "", lastSyncAt: state.lastOkAt, conflicts: state.conflicts.length });
+        setStatus({ state: "ok", message: "", code: "", lastSyncAt: state.lastOkAt, conflicts: state.conflicts.length });
         return { ok: true, skipped: true, pulled: 0, pushed: 0, conflicts: 0 };
       }
       let got = await remote.getIndex();
@@ -388,6 +441,8 @@
       const uploads = [];
       let pulled = 0;
       let conflicts = 0;
+      // 拉下来却没能在本机落地的单元：基准不记、内容不变，下一轮重试
+      const stalePaths = [];
       // 云端清单这一轮有没有真的变：没变就别写（写一次 = 一次读 + 一次写，白烧额度）
       let dirtyIndex = rebuilt;
 
@@ -399,16 +454,42 @@
         const localHash = local == null ? null : await sha256(local);
         const remoteChanged = !!(entry && (!base || entry.rev !== base.rev));
         const localChanged = base ? localHash !== base.hash : localHash != null;
+        // 「版本号一样、内容哈希却不同」不是正常同步能走出来的状态，只可能来自上一次
+        // 没落地的拉取（见 landedHash）：当时 rev 被记上了，内容没变。本机自己也没改过的话，
+        // 就该把这份内容重新拉一次 —— 没有这一条，踩过的设备会永远停在旧内容上，
+        // 因为 rev 已经对齐，remoteChanged 永远是 false。
+        const drifted = !!(entry && base && entry.hash && !localChanged
+          && entry.rev === base.rev && base.hash !== entry.hash);
 
         if (localHash == null && !entry) {
           if (base) delete state.base[path];
           continue;
         }
 
-        // 本地删了：远端跟着删；若远端期间改过，先把远端那版存成副本再删
+        // 本机没有这个文件、云端清单里有 —— 这里面藏着两种完全不同的情况，务必分开：
+        //   ① 基准里也没有它的记录 = 这台设备从来没拿到过它（新设备，或者只是本机没打开过那个模块，
+        //      所以本地文件压根不存在）。它应该被下载下来。绝不能当成"用户删了"去删云端 ——
+        //      否则新设备第一次同步就会把云端清空，而自己还什么都没拿到（手机端踩过这个坑）。
+        //   ② 基准里有记录 = 以前在本机同步过、现在没了，那才是真正的本地删除。
         if (localHash == null && entry) {
+          if (!base && opts.force !== "push") {
+            const remoteText = await fetchUnit(path);
+            if (remoteText != null) {
+              await applyUnit(path, remoteText);
+              const landed = await landedHash(path, entry.hash);
+              if (landed == null) {
+                stalePaths.push(path);
+              } else {
+                state.base[path] = { rev: entry.rev, hash: landed };
+                pulled += 1;
+              }
+            }
+            continue;
+          }
           let remoteText = null;
-          if (remoteChanged && !opts.force) remoteText = await fetchUnit(path);
+          // 留副本这件事不再排除 force 模式：对话框跟用户承诺过"被覆盖的那边会存成冲突副本"，
+          // 而这条路删的是云端的文件，没有副本就不可逆。
+          if (remoteChanged) remoteText = await fetchUnit(path);
           await remote.deleteObject(objectKey(path));
           delete index.files[path];
           delete state.base[path];
@@ -423,9 +504,21 @@
         if (opts.force === "pull" && entry) {
           const remoteText = await fetchUnit(path);
           if (remoteText != null) {
+            // 对话框跟用户承诺过「被覆盖的那边会存成冲突副本」，强制拉取这条路也得兑现：
+            // 本机那份可能是离线时真改出来的（手机上勾掉的待办），覆盖掉就找不回来了。
+            // 但默认值那种空壳（[] / {}）不留，否则新设备第一次同步平白多出一排副本。
+            if (local != null && local !== remoteText && !isBlankUnit(local)) {
+              await saveConflict(path, local, state.deviceId);
+              conflicts += 1;
+            }
             await applyUnit(path, remoteText);
-            state.base[path] = { rev: entry.rev, hash: await sha256(await unitText(path)) };
-            pulled += 1;
+            const landed = await landedHash(path, entry.hash);
+            if (landed == null) {
+              stalePaths.push(path);
+            } else {
+              state.base[path] = { rev: entry.rev, hash: landed };
+              pulled += 1;
+            }
           }
           continue;
         }
@@ -444,12 +537,17 @@
             conflicts += 1;
           }
           uploads.push({ path, text: local, hash: localHash, baseRev: entry.rev });
-        } else if (remoteChanged && !localChanged) {
+        } else if (!localChanged && (remoteChanged || drifted)) {
           const remoteText = await fetchUnit(path);
           if (remoteText != null) {
             await applyUnit(path, remoteText);
-            state.base[path] = { rev: entry.rev, hash: await sha256(await unitText(path)) };
-            pulled += 1;
+            const landed = await landedHash(path, entry.hash);
+            if (landed == null) {
+              stalePaths.push(path);
+            } else {
+              state.base[path] = { rev: entry.rev, hash: landed };
+              pulled += 1;
+            }
           }
         } else if (localChanged || !entry) {
           uploads.push({ path, text: local, hash: localHash, baseRev: entry ? entry.rev : 0 });
@@ -523,6 +621,7 @@
         setStatus({
           state: "error",
           message: "清单写入被其它设备抢先，改动已上传，下次同步会自动合并",
+          code: "",
           lastSyncAt: state.lastSyncAt,
           conflicts: state.conflicts.length
         });
@@ -530,20 +629,24 @@
         state.lastOkAt = state.lastSyncAt;
         setStatus({
           state: "ok",
-          message: rebuilt ? "云端原有清单解不开（另一把同步密码写的），已按「以本机为准」重建" : "",
+          message: rebuilt
+            ? "云端原有清单解不开（另一把同步密码写的），已按「以本机为准」重建"
+            : staleMessage(stalePaths),
+          code: rebuilt ? "rebuild" : (stalePaths.length ? "stale" : ""),
           lastSyncAt: state.lastSyncAt,
           conflicts: state.conflicts.length
         });
       }
       await saveState();
       if (conflicts) emit();
-      return { ok: saved, pulled, pushed: uploads.length, conflicts };
+      return { ok: saved, pulled, pushed: uploads.length, conflicts, stale: stalePaths.length, stalePaths };
     } catch (err) {
       const message = (err && err.message) || "同步失败";
+      const code = (err && err.code) || "";
       // 留一份最近一次失败，健康度面板据此归类（网络 / 凭证 / 权限）
-      if (state) state.lastError = { at: new Date().toISOString(), message, kind: classifyError(message) };
-      setStatus({ state: "error", message });
-      return { ok: false, message };
+      if (state) state.lastError = { at: new Date().toISOString(), message, kind: classifyError(message), code };
+      setStatus({ state: "error", message, code });
+      return { ok: false, message, code };
     } finally {
       running = false;
       refreshPending();
@@ -668,6 +771,19 @@
     if (!remote && root.SyncCrypto.hasConfig() && !root.SyncCrypto.isUnlocked()) {
       setStatus({ state: "locked", message: "" });
     }
+    // 回到这个页面时也补一次：手机上的标签页常年开着不刷新，光靠「打开页面 / 本机改动」
+    // 触发的话，另一台设备新加的东西要等用户手动刷新才看得到。
+    // 依旧走 idle 那条路（有 30 秒窗口兜着），不会因为切进切出就一直读云端清单。
+    if (!attachedVisible) {
+      attachedVisible = true;
+      root.addEventListener("visibilitychange", () => {
+        if (root.document && root.document.visibilityState !== "visible") return;
+        // 没配 / 没解锁就别碰：runSync 开头会把状态改写成「未开启」，
+        // 那会把 attach 标好的「等待解锁」抹掉。
+        if (!remote || !root.SyncCrypto.isUnlocked()) return;
+        runSync({ idle: true });
+      });
+    }
     // 进页面时先拉一次：这一步是等着的，页面渲染时看到的就是同步后的数据。
     // 带 idle：刚同步过又不缺东西就跳过，切页 / 刷新不再每次都读一遍云端清单。
     if (remote && root.SyncCrypto.isUnlocked()) await runSync({ idle: true });
@@ -709,8 +825,11 @@
       remoteUpdatedAt: "",
       behind: 0,        // 云端 rev 比本机基准高的单元数
       behindMax: 0,     // 其中最大的版本号差
+      mismatch: 0,      // 版本号追平了、内容却对不上的单元数（上一次拉取没落地留下的坏基准）
+      mismatchPaths: [],
       remoteReachable: false,
       remoteMessage: "",
+      remoteCode: "",
       lastError: state.lastError || null
     };
 
@@ -739,9 +858,17 @@
           report.behind += 1;
           if (gap > report.behindMax) report.behindMax = gap;
         }
+        // 版本号一样、内容哈希却不同：这是上一次拉取没落地留下的坏基准（见 landedHash）。
+        // 只看 rev 的话它会显示成「云端不领先」，恰好把最该被看见的那种状态说反了。
+        const baseRec = state.base[path];
+        if (baseRec && files[path].hash && Number(baseRec.rev) === cloudRev && baseRec.hash !== files[path].hash) {
+          report.mismatch += 1;
+          report.mismatchPaths.push(path);
+        }
       });
     } catch (err) {
       report.remoteMessage = (err && err.message) || "读不到云端清单";
+      report.remoteCode = (err && err.code) || "";
     }
     return report;
   }

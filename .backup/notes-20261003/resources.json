@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "records": [
+    {
+      "id": "9dfb9d5d-405a-48ff-b14b-a68fdbf663f8",
+      "type": "path",
+      "name": "阿斯顿",
+      "username": "",
+      "secret": "",
+      "path": "http://127.0.0.1:47321/resources.html",
+      "host": "",
+      "softwareId": "",
+      "notes": "",
+      "updatedAt": "2026-09-29T11:06:04.411Z"
+    },
+    {
+      "id": "3127e799-fe7b-4f71-8f72-2956eb7024d1",
+      "type": "credential",
+      "name": "asd",
+      "username": "a",
+      "secret": "a",
+      "path": "",
+      "host": "",
+      "softwareId": "",
+      "notes": "",
+      "updatedAt": "2026-09-29T11:06:46.418Z"
+    },
+    {
+      "id": "0d54b005-2c59-4ef1-9303-ca7799337ae7",
+      "type": "credential",
+      "name": "asd asd",
+      "username": "d asd asd",
+      "secret": "asd as",
+      "path": "",
+      "host": "",
+      "softwareId": "",
+      "notes": "",
+      "updatedAt": "2026-09-29T11:07:13.442Z"
+    }
+  ],
+  "updatedAt": "2026-09-29T11:07:13.442Z"
+}

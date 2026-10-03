@@ -313,11 +313,24 @@
     };
   }
 
+  /* 手机环境判定。手机浏览器现在也开始暴露 showDirectoryPicker 了，
+     但那个入口在手机上既难操作，选出来的目录也常常不是用户心里"那份数据"，
+     所以判断"能不能用文件夹"时得把设备类型一并算上。
+     iPadOS 13+ 的 Safari 把自己报成 Mac，只能再靠触屏点数认出来。 */
+  function isMobileEnv() {
+    const nav = root.navigator || {};
+    const ua = nav.userAgent || "";
+    if (/Android|iPhone|iPad|iPod|Windows Phone|HarmonyOS|Mobile/i.test(ua)) return true;
+    return /Macintosh/.test(ua) && (nav.maxTouchPoints || 0) > 1;
+  }
+
   root.Storage = {
     loadHandle,
     saveHandle,
     createLocal,
     createIndexed,
-    hasDirectoryPicker: () => typeof root.showDirectoryPicker === "function"
+    isMobileEnv,
+    // 「能真正当数据落点用的文件夹」：光有 API 不够，明文 HTTP（非安全上下文）和手机上都没有
+    hasDirectoryPicker: () => typeof root.showDirectoryPicker === "function" && !isMobileEnv()
   };
 })(typeof window !== "undefined" ? window : globalThis);

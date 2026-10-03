@@ -1,0 +1,20 @@
+[
+  {
+    "id": "b897448f-9146-4b5b-89a6-79b452ccdde5",
+    "name": "阿斯顿",
+    "softwareId": "阿斯顿",
+    "project": "DR23",
+    "notes": "",
+    "deletedAt": "2026-09-30T00:43:12.903Z",
+    "updatedAt": "2026-09-30T00:43:12.903Z"
+  },
+  {
+    "id": "5c4746e5-6375-4d21-b63a-5d08782f3cf6",
+    "name": "DR23_OTDR_V1",
+    "softwareId": "SOFTWARE2978",
+    "project": "HP OTDR",
+    "notes": "",
+    "deletedAt": "",
+    "updatedAt": "2026-09-30T03:03:08.065Z"
+  }
+]

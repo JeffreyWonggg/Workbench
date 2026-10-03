@@ -718,12 +718,25 @@
     async open() {
       const status = { ok: false, needsPick: false, needsPermission: false, unsupported: false, backend: "", folderName: "", error: "" };
       this.status = status;
-      if (typeof root.showDirectoryPicker !== "function") {
+      if (!Storage.hasDirectoryPicker()) {
         // 没有文件夹可用（手机浏览器、非安全上下文）：落到 IndexedDB 后端。
+        // 这里判的是"这个环境能不能真的用文件夹"，不是"浏览器有没有这个 API"——
+        // 手机上 showDirectoryPicker 也调得起来，早先只判 API 存在，手机就会停在
+        // "去选个文件夹"那一步，fs 一直是空的，云同步第一次读本地文件就空指针崩掉。
         // 这里仍然不算 ok，放不放行由云同步决定——配好了并能连上才让页面继续。
         status.unsupported = true;
         status.backend = "indexed";
         this.fs = Storage.createIndexed();
+        // 每个页面一上来就取 Workbench.meta.projects，这里不读的话整页都是
+        // "Cannot read properties of null (reading 'projects')"。
+        // 只读不写：本机落一份默认 meta.json，同步会把它算成"本机改过"推上云，
+        // 把别的设备上的项目清单盖掉；留空的话云端那份会被正常拉下来，
+        // applyMeta() 再把它补回 this.meta。
+        try {
+          this.meta = await this.ensureMeta({ readOnly: true });
+        } catch (err) {
+          status.error = err && err.message ? err.message : "数据打不开";
+        }
         return status;
       }
       let handle = null;
@@ -857,7 +870,9 @@
       return backup;
     },
 
-    async ensureMeta() {
+    // readOnly（手机 / IndexedDB 后端用，见 open()）：只把 meta.json 读进内存，
+    // 缺了就用内存默认值顶上，绝不落盘。落盘会把「本机还没同步过」伪装成「本机改过」。
+    async ensureMeta(options) {
       const fallback = {
         projects: DEFAULT_PROJECTS.slice(),
         lastWeek: null,
@@ -866,7 +881,22 @@
       };
       let meta;
       try {
-        meta = await this.readJson("meta.json", fallback);
+        if (options && options.readOnly) {
+          let text = null;
+          try {
+            text = await this.fs.readText("meta.json");
+          } catch (err) {
+            text = null;
+          }
+          try {
+            meta = text == null || text.trim() === "" ? structuredClone(fallback) : JSON.parse(text);
+          } catch (err) {
+            // 本机这份坏了也不拦着：这个后端只是云端数据的落点，同步会把云端那份拉下来换掉它
+            meta = structuredClone(fallback);
+          }
+        } else {
+          meta = await this.readJson("meta.json", fallback);
+        }
       } catch (err) {
         throw new Error("meta.json 无法读取：" + err.message);
       }

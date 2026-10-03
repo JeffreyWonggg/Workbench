@@ -455,8 +455,15 @@
       folderBtn.textContent = "允许访问";
       changeBtn.hidden = false;
       projectBtn.disabled = true;
+    } else if (status.unsupported) {
+      // 手机这类没有文件夹的环境：数据其实是落在浏览器里的，写「浏览器不可用」
+      // 会让人以为坏了，反而不敢用；按钮也就该是去配云同步，而不是再弹一次文件夹选择器。
+      paintFolder(status.backend === "indexed" ? "数据存在本机浏览器" : "当前浏览器不可用", "");
+      folderBtn.textContent = "设置云同步";
+      changeBtn.hidden = true;
+      projectBtn.disabled = true;
     } else {
-      paintFolder(status.unsupported ? "当前浏览器不可用" : "未选择文件夹", "");
+      paintFolder("未选择文件夹", "");
       folderBtn.textContent = "选择数据文件夹";
       changeBtn.hidden = true;
       projectBtn.disabled = true;
@@ -590,6 +597,9 @@
   // 云同步能不能顶替本地文件夹：配过、并且这一页已经拿到密钥（输过密码，或本机记住过）
   async function cloudReady() {
     if (!root.Sync || !root.SyncCrypto) return false;
+    // 本机得先有个能读写的落点（数据文件夹或 IndexedDB）。同步一开始就要读本地文件，
+    // 后端为空时云同步顶不上——真放行进去，会在第一次同步时空指针崩掉。
+    if (!root.Workbench || !root.Workbench.fs) return false;
     if (!root.SyncCrypto.hasConfig()) return false;
     if (root.SyncCrypto.isUnlocked()) return true;
     try {

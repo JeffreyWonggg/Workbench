@@ -17,6 +17,16 @@
     return node;
   }
 
+  // 面板构建戳：手机 / 别人电脑上打开「设置 → 云同步」，拉到底看这一行。
+  // 和电脑端显示的一致 = 页面跑的是最新代码；显示的是旧的那串（或压根没有这行）
+  // = 页面没重开，浏览器还在用内存 / 缓存里的旧 JS。
+  // 每次改 sync-*.js 或同步面板样式并重新发布后，把下面的时间改成发布时间。
+  const BUILD = "2026-10-03 16:40";
+
+  function buildStamp() {
+    return el("p", "sync-build muted", "同步面板构建 " + BUILD);
+  }
+
   function toast(text) {
     if (root.Nav && root.Nav.toast) root.Nav.toast(text);
   }
@@ -85,15 +95,38 @@
         setNote(probe.message, "error");
         return;
       }
+      // 云端可能早就有数据了（电脑上配过）：盐在密文信封里，本机刚生成的这把对不上，
+      // 同样的密码也解不开。先试着采用云端的盐；密码不对就当场退回，不带着废密钥往下走。
+      let hasRemote = false;
+      try {
+        const head = await remote.getIndex();
+        if (head.text) hasRemote = await root.SyncCrypto.adoptRemote(password, head.text);
+      } catch (err) {
+        await root.SyncCrypto.clear();
+        setNote((err && err.message) || "云端数据解不开", "error");
+        return;
+      }
       root.Sync.setRemote(remote);
       if (remember) await root.SyncCrypto.remember();
       else root.SyncCrypto.forget();
-      const direction = await askDirection();
+      const direction = await askDirection(hasRemote);
       if (!direction) {
         setNote("已连上，等你选好第一次同步的方向再开始", "info");
         return;
       }
-      await root.Sync.firstRun(direction);
+      // 这一步的返回值以前是丢掉的：同步失败（网络 / 凭证 / 权限）也照样打出
+      // 「已按云端内容覆盖本机」，面板看着像成功了，实际一个字都没拉下来 ——
+      // 排查时最容易被这句话带偏，所以这里按真实结果说话。
+      const result = await root.Sync.firstRun(direction);
+      if (!result || !result.ok) {
+        setNote((result && result.message) || "第一次同步没成功，展开下面的「健康度」看原因", "error");
+        return;
+      }
+      const warn = root.Sync.status ? root.Sync.status().message : "";
+      if (warn) {
+        setNote(warn, "info");
+        return;
+      }
       setNote(direction === "pull" ? "已按云端内容覆盖本机" : "已把本机数据推上去", "ok");
       toast("云同步已开启");
     } catch (err) {
@@ -131,11 +164,143 @@
     setNote("", "info");
     paint();
     const result = await root.Sync.sync({});
-    setNote(result && result.ok
-      ? "同步完成" + (result.conflicts ? "，产生了 " + result.conflicts + " 个冲突副本" : "")
-      : ((result && result.message) || "同步失败"), result && result.ok ? "ok" : "error");
+    if (result && result.ok) {
+      // 把这一轮实际拉回 / 推上去的数量报出来：手机上「看不到电脑刚加的东西」时，
+      // 「拉回 0 项」（云端就没有 / 这台设备没在同步）和「拉回 1 项但页面没变」
+      // （数据已经到了本机，是当前这一页没重画）是两条完全不同的排查方向。
+      const bits = [];
+      if (result.pulled) bits.push("从云端拉回 " + result.pulled + " 项");
+      if (result.pushed) bits.push("推上去 " + result.pushed + " 项");
+      if (result.conflicts) bits.push("产生 " + result.conflicts + " 个冲突副本");
+      if (result.stale) {
+        bits.push("有 " + result.stale + " 项拉下来却没落到本机（"
+          + (result.stalePaths || []).slice(0, 3).join("、") + "）");
+      }
+      setNote("同步完成" + (bits.length ? "（" + bits.join("，") + "）" : "（两边本来就一致，没有要动的）"),
+        result.stale ? "error" : "ok");
+    } else {
+      setNote((result && result.message) || "同步失败", "error");
+    }
     busy = false;
     paint();
+  }
+
+  // 「以云端为准」：不走「哪边新」那一套判定，逐个单元把云端那份拿下来覆盖本机。
+  // 之所以要有这个手动出口：「立即同步」在两份被认为一样新的时候什么都不做，
+  // 而本机内容其实是旧的（坏基准、或者读到的清单本身是缓存的旧副本）时，
+  // 它会一直回「两边本来就一致」，怎么点都出不来数据。
+  // 本机被换掉的内容引擎会留成冲突副本（内容是默认空壳的不留），所以不是不可逆操作。
+  async function pullFromCloud() {
+    if (busy) return;
+    const ok = root.Nav && root.Nav.ask
+      ? await root.Nav.ask({
+          title: "以云端为准",
+          text: "把云端那份完整拉下来，覆盖这台设备上的同步数据（待办、周报、笔记、记账、菜谱、软件号、记谱）。"
+            + "这台设备上还没推上去的改动会先存成冲突副本，不会直接丢掉。现在拉吗？",
+          okText: "以云端为准"
+        })
+      : true;
+    if (!ok) return;
+    busy = true;
+    setNote("正在按云端那份覆盖本机…", "info");
+    paint();
+    let result = null;
+    try {
+      result = await root.Sync.sync({ force: "pull" });
+    } catch (err) {
+      result = { ok: false, message: (err && err.message) || "同步失败" };
+    }
+    if (result && result.ok) {
+      const bits = [];
+      if (result.pulled) bits.push("从云端拉回 " + result.pulled + " 项");
+      if (result.conflicts) bits.push("本机原来的内容存成了 " + result.conflicts + " 个冲突副本");
+      if (result.stale) {
+        bits.push("有 " + result.stale + " 项没能落到本机（"
+          + (result.stalePaths || []).slice(0, 3).join("、") + "）");
+      }
+      setNote("已按云端为准" + (bits.length ? "（" + bits.join("，") + "）" : ""),
+        result.stale ? "error" : "ok");
+    } else {
+      setNote((result && result.message) || "没能按云端覆盖本机", "error");
+    }
+    busy = false;
+    // 刚覆盖过，健康度那一格必须按新状态重算，不能被 5 秒缓存挡住
+    healthCache = { at: 0, data: null };
+    paint();
+  }
+
+  // 「检测连接」：往云端真写一次再读回来，并单独验一次防缓存读取通道，结论原样显示。
+  // 已配置的设备也能点，不用为了看这一句去「关闭同步 → 重新开启」。
+  async function testConnection() {
+    if (busy) return;
+    busy = true;
+    setNote("正在测云端读写与防缓存读取通道…", "info");
+    paint();
+    try {
+      const config = await root.SyncCrypto.config();
+      if (!config) {
+        setNote("本机配置读不出来，先在下面重新配一次", "error");
+        return;
+      }
+      const remote = await remoteFrom(config);
+      const probe = await remote.probe();
+      setNote(probe.message, probe.ok ? "ok" : "error");
+    } catch (err) {
+      setNote((err && err.message) || "检测失败", "error");
+    } finally {
+      busy = false;
+      paint();
+    }
+  }
+
+  // 「本机这把钥匙解不开云端那份密文」时的修法：拿用户输的密码 + 云端信封里的盐
+  // 重派一次密钥（adoptRemote 会当场验一遍密文，验不过就抛），再让他选一次方向。
+  // 以前这段只能靠「关闭同步 → 重新开启」凑出来：配置和基准被清掉、还得自己记得选哪边，
+  // 而另一台设备重建过云端之后，这台设备点多少次「立即同步」都只会重复报同一句错。
+  async function realignTo(password, remember) {
+    busy = true;
+    setNote("正在用这把密码对上云端…", "info");
+    paint();
+    try {
+      const config = await root.SyncCrypto.config();
+      if (!config) {
+        setNote("本机配置读不出来，先在下面重新配一次", "error");
+        return;
+      }
+      const remote = await remoteFrom(config);
+      const head = await remote.getIndex();
+      root.Sync.setRemote(remote);
+      if (!head.text) {
+        setNote("云端还没有数据，直接同步就行", "info");
+        await root.Sync.sync({});
+        return;
+      }
+      const adopted = await root.SyncCrypto.adoptRemote(password, head.text);
+      if (!adopted) {
+        setNote("云端那份不像本工作台的密文（信封读不出来），不敢改本机密钥", "error");
+        return;
+      }
+      rememberConfig(config);
+      if (remember) await root.SyncCrypto.remember();
+      else root.SyncCrypto.forget();
+      const direction = await askDirection(true, "密钥已对上云端，再选一次以哪边为准");
+      if (!direction) {
+        setNote("密钥已经和云端对上了，选好方向再同步一次", "info");
+        return;
+      }
+      const result = await root.Sync.firstRun(direction);
+      if (!result || !result.ok) {
+        setNote((result && result.message) || "对上云端后第一次同步没成功，看下面的「健康度」", "error");
+        return;
+      }
+      setNote(direction === "pull" ? "已对上云端，并按云端内容覆盖本机" : "已对上云端，并把本机数据推了上去", "ok");
+      toast("已对上云端");
+    } catch (err) {
+      setNote((err && err.message) || "对上云端失败", "error");
+    } finally {
+      busy = false;
+      paint();
+    }
   }
 
   async function disable() {
@@ -157,19 +322,30 @@
     paint();
   }
 
-  function askDirection() {
+  function askDirection(hasRemote, title) {
     return new Promise((resolve) => {
       const dialog = document.createElement("dialog");
       dialog.className = "code-dialog";
+      // 云端有数据时把「以云端为准」摆成主按钮：新设备（手机第一次配）上本机往往只有
+      // 默认的空列表，若顺手点了「以本机为准」，就会把云端那份覆盖掉，另一台机器跟着遭殃。
+      // 哪边全由用户判断，但默认该偏向云端。
+      const pullClass = hasRemote ? "btn primary" : "btn";
+      const pushClass = hasRemote ? "btn" : "btn primary";
       dialog.innerHTML = [
-        "<h2>第一次同步</h2>",
-        '<p class="sub">云端还没有这份数据（或者你在这台设备上换了个新环境）。'
+        "<h2>" + (title || "第一次同步") + "</h2>",
+        '<p class="sub">' + (hasRemote
+          ? "云端已经有一份数据了，密码也验过是对的。"
+          : "云端还没有这份数据（或者你在这台设备上换了个新环境）。")
           + "要拿哪边当底子？选错也不会丢东西——被覆盖的那边会存成冲突副本。</p>",
+        hasRemote
+          ? '<p class="sub muted">云端那份是各台设备共用的：选「以本机为准」会把其它设备看到的内容换成这台设备的版本。'
+            + "刚配的手机、刚换的浏览器通常该选「以云端为准」。</p>"
+          : "",
         '<div class="dialog-actions">',
-        '  <button type="button" class="btn" data-dir="pull">以云端为准，覆盖本机</button>',
+        '  <button type="button" class="' + pullClass + '" data-dir="pull">以云端为准，覆盖本机</button>',
         '  <span class="dialog-spacer"></span>',
         '  <button type="button" class="btn" data-dir="cancel">取消</button>',
-        '  <button type="button" class="btn primary" data-dir="push">以本机为准，推上去</button>',
+        '  <button type="button" class="' + pushClass + '" data-dir="push">以本机为准，推上去</button>',
         "</div>"
       ].join("");
       const close = (value) => {
@@ -250,7 +426,7 @@
           : "没有",
         data.conflictCount ? "is-warn" : "is-ok"),
       healthItem("版本差", versionText(data),
-        (data.behind || data.pending) ? "is-warn" : "is-ok"),
+        (data.behind || data.pending || data.mismatch) ? "is-warn" : "is-ok"),
       healthItem("最近一次失败",
         data.lastError ? `${kindLabel(data.lastError.kind)} · ${ago(data.lastError.at)}` : "没有失败记录",
         data.lastError ? "is-bad" : "is-ok")
@@ -271,21 +447,51 @@
       ? `云端领先 ${data.behind} 项（最大差 ${data.behindMax}）`
       : "云端不领先";
     const local = data.pending ? `本地待推 ${data.pending} 项` : "本地无待推";
-    return cloud + " · " + local;
+    // 版本号追平了、内容却对不上：只看 rev 的话这里会写成「云端不领先」，
+    // 而这句话恰恰是最误导的——本机拿着旧内容，面板却说一切都好。
+    const drift = data.mismatch ? ` · 有 ${data.mismatch} 项内容对不上云端` : "";
+    // 云端清单的更新时间一并报出来：它若明显旧于另一台设备刚同步过的时间，
+    // 那就不是「云端真的没变」，而是这台设备读到的清单是缓存的旧副本。
+    const when = data.remoteUpdatedAt ? `（云端清单更新于 ${ago(data.remoteUpdatedAt)}）` : "";
+    return cloud + " · " + local + drift + when;
+  }
+
+  // 「本机密钥对不上云端」按归类属于凭证，但病因跟匿名登录 / 域名那些完全不是一回事：
+  // 照着通用提示跑去控制台改只会白折腾，所以这一种单独给说法。
+  function mismatchHintText() {
+    const unlocked = syncReady() && root.SyncCrypto.isUnlocked();
+    return unlocked
+      ? "本机密钥解不开云端那份密文：在上面的密码框里填一次当初那把同步密码，点「用同步密码对上云端」，"
+        + "再选「以云端为准」就能接回来。反复点「立即同步」不会有别的结果。"
+      : "本机密钥解不开云端那份密文：先在下面解锁这一页，再填一次当初那把同步密码点「用同步密码对上云端」。";
   }
 
   function healthHints(data) {
     const hints = [];
+    const mismatchNow = !!(root.Sync.status && root.Sync.status().code === "key-mismatch");
+    const mismatchLast = !!(data.lastError && data.lastError.code === "key-mismatch");
     if (data.lastError) {
       hints.push("最近一次失败（" + kindLabel(data.lastError.kind) + "）：" + data.lastError.message
-        + "　→　" + kindHint(data.lastError.kind));
+        + ((mismatchNow || mismatchLast) ? "" : "　→　" + kindHint(data.lastError.kind)));
     }
+    if (mismatchNow) hints.push(mismatchHintText());
     if (data.conflictCount) {
       hints.push(`冲突副本最早的一份是 ${ago(data.oldestConflictAt)}，下面「冲突副本」里可以查看 / 恢复 / 删除。`);
     }
+    if (data.mismatch) {
+      hints.push("有 " + data.mismatch + " 项本机内容和云端对不上（"
+        + (data.mismatchPaths || []).slice(0, 3).join("、")
+        + "）：上一次从云端拉下来的内容没能落到本机，这边还是旧的。点上面的「立即同步」会让它重新拉一遍；"
+        + "要是反复出现，把这一句发我。");
+    }
     if (!data.remoteReachable && data.remoteMessage) {
-      const kind = root.Sync.classifyError ? root.Sync.classifyError(data.remoteMessage) : "unknown";
-      hints.push("云端清单读不到（" + kindLabel(kind) + "）：" + data.remoteMessage + "　→　" + kindHint(kind));
+      // 文案本身已经在上面那条「最近一次失败」里给过了，这里只补「该怎么做」；
+      // key-mismatch 不能按凭证类的通用建议去引，那会把人带去控制台白改一通。
+      if (data.remoteCode === "key-mismatch") hints.push(mismatchHintText());
+      else {
+        const kind = root.Sync.classifyError ? root.Sync.classifyError(data.remoteMessage) : "unknown";
+        hints.push("云端清单读不到（" + kindLabel(kind) + "）：" + data.remoteMessage + "　→　" + kindHint(kind));
+      }
     }
     return hints;
   }
@@ -366,6 +572,11 @@
     const stamp = ago(status.lastSyncAt);
     if (stamp) line.append(el("span", "sync-when muted", "上次同步 " + stamp));
     wrap.append(line);
+    // 同步本身成功了、但拉下来的东西没落地：状态灯还是绿的，只在这句里说实话。
+    // 不写出来的话，用户看到的就是「已同步」，却一直拿着旧数据。
+    if (status.state === "ok" && status.message) {
+      wrap.append(el("div", "sync-note is-error", status.message));
+    }
     return wrap;
   }
 
@@ -424,6 +635,44 @@
     return form;
   }
 
+  // 只有引擎那边明确报了 key-mismatch 才出现：本机这把密钥解不开云端那份密文。
+  // 这类状态没有别的出路——点「立即同步」永远报同一句错，「关闭同步」重配又太重，
+  // 所以直接给条一步到位的路。
+  function buildRealign() {
+    const box = el("div", "sync-realign");
+    box.append(el("div", "sync-realign-head", "本机密钥对不上云端那份数据"));
+    box.append(el("p", "sub muted",
+      "这台设备的同步密钥和云端那份密文不是同一把（多半是另一台设备重建过云端，或者换过一次配置）。"
+      + "填当初那把同步密码，让这台设备对上云端，再选一次以哪边为准就能继续同步；本机文件不会被清掉。"));
+    const field = el("label", "sync-field");
+    field.append(el("span", null, "同步密码"));
+    const pw = document.createElement("input");
+    pw.type = "password";
+    pw.id = "wb-sync-realign-password";
+    pw.autocomplete = "off";
+    field.append(pw);
+    box.append(field);
+
+    const rememberField = el("label", "sync-check");
+    const box2 = document.createElement("input");
+    box2.type = "checkbox";
+    box2.id = "wb-sync-realign-remember";
+    box2.checked = root.SyncCrypto.remembered();
+    rememberField.append(box2, el("span", null, "在这台设备上记住（重新对上云端后旧的那份密钥包会失效，所以这里要重新勾一次）"));
+    box.append(rememberField);
+
+    const row = el("div", "dialog-actions");
+    const go = document.createElement("button");
+    go.type = "button";
+    go.className = "btn primary";
+    go.id = "wb-sync-realign-go";
+    go.textContent = "用同步密码对上云端";
+    go.disabled = busy;
+    row.append(go);
+    box.append(row);
+    return box;
+  }
+
   function buildActions(mode) {
     const row = el("div", "dialog-actions");
     const primary = document.createElement("button");
@@ -445,6 +694,28 @@
       now.textContent = "立即同步";
       now.disabled = busy;
       row.append(now);
+
+      // 「立即同步」是按「哪边新」判定的：本机这份要是被认为不比云端旧，它一个字都不会动，
+      // 只回一句「两边本来就一致」。这台设备手上拿着旧内容、面板却说一切正常时，
+      // 就只剩这一条路能强制把云端那份拉下来（首次配置的对话框里本来就有，配好之后再也点不到）。
+      const pull = document.createElement("button");
+      pull.type = "button";
+      pull.className = "btn";
+      pull.id = "wb-sync-pull";
+      pull.textContent = "以云端为准";
+      pull.disabled = busy;
+      row.append(pull);
+
+      // 「检测连接」以前只在首次开启同步时自动跑一次（见 enable），配好之后就没入口了；
+      // 而它报的「防缓存读取通道：可用 / 不可用（原因）」正是排查「电脑上改了、
+      // 这台设备怎么同步都看不到」最关键的一句话，所以留一个随时能点的按钮。
+      const test = document.createElement("button");
+      test.type = "button";
+      test.className = "btn";
+      test.id = "wb-sync-test";
+      test.textContent = "检测连接";
+      test.disabled = busy;
+      row.append(test);
     }
 
     row.append(el("span", "dialog-spacer"));
@@ -528,6 +799,7 @@
 
     if (!syncReady()) {
       section.append(el("p", "sub muted", "同步模块没加载，检查页面是否引入了 js/sync-*.js。"));
+      section.append(buildStamp());
       return section;
     }
 
@@ -540,6 +812,10 @@
     }
 
     section.append(buildActions(mode));
+
+    // key-mismatch 只在解锁后能给操作入口：锁着的时候密码框就是下面那个解锁框，
+    // 让用户先解锁，状态一变这里自己就出来了。
+    if (mode === "ready" && status.code === "key-mismatch") section.append(buildRealign());
 
     if (note) section.append(el("p", "sync-note is-" + noteKind, note));
 
@@ -583,8 +859,27 @@
     }
     const now = section.querySelector("#wb-sync-now");
     if (now) now.addEventListener("click", syncNow);
+    const pullNow = section.querySelector("#wb-sync-pull");
+    if (pullNow) pullNow.addEventListener("click", pullFromCloud);
+    const testNow = section.querySelector("#wb-sync-test");
+    if (testNow) testNow.addEventListener("click", testConnection);
+    const realign = section.querySelector("#wb-sync-realign-go");
+    if (realign) {
+      realign.addEventListener("click", () => {
+        const password = String((section.querySelector("#wb-sync-realign-password") || {}).value || "");
+        const remember = !!(section.querySelector("#wb-sync-realign-remember") || {}).checked;
+        if (!password) {
+          setNote("先填同步密码", "error");
+          paint();
+          return;
+        }
+        realignTo(password, remember);
+      });
+    }
     const off = section.querySelector("#wb-sync-off");
     if (off) off.addEventListener("click", disable);
+
+    section.append(buildStamp());
 
     return section;
   }
