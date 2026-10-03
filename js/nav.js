@@ -1294,9 +1294,19 @@
      目前只有一项能力：把不用的页面从侧栏（和 Ctrl+K）里关掉。
      关掉只影响显示——页面本身不动，直接输网址照样能打开，排序位置也留着。 */
 
+  // 发布那一页只有从本机服务（127.0.0.1）打开的页面才用得上，
+  // 线上静态托管、局域网访问点了只会白等，干脆不出现
+  function localOnly() {
+    return location.hostname === "127.0.0.1" || location.hostname === "localhost";
+  }
+
   function settingsDialog() {
     let dialog = document.getElementById("wb-settings-dialog");
     if (dialog) return dialog;
+    const deployPane = localOnly()
+      ? '<div class="settings-pane" data-pane="deploy" role="tabpanel" hidden>'
+        + '<div class="deploy-slot" id="wb-deploy-slot"></div></div>'
+      : "";
     dialog = document.createElement("dialog");
     dialog.id = "wb-settings-dialog";
     dialog.className = "code-dialog wb-settings";
@@ -1305,6 +1315,7 @@
       '<div class="settings-tabs" role="tablist">',
       '  <button type="button" class="settings-tab is-active" data-tab="pages" role="tab" aria-selected="true">页面</button>',
       '  <button type="button" class="settings-tab" data-tab="sync" role="tab" aria-selected="false">云同步</button>',
+      localOnly() ? '  <button type="button" class="settings-tab" data-tab="deploy" role="tab" aria-selected="false">发布</button>' : "",
       "</div>",
       '<div class="settings-pane" data-pane="pages" role="tabpanel">',
       '  <p class="sub">关掉不用的页面，侧栏和 Ctrl+K 搜索里都不再出现。'
@@ -1314,6 +1325,7 @@
       '<div class="settings-pane" data-pane="sync" role="tabpanel" hidden>',
       '  <div class="sync-slot" id="wb-sync-slot"></div>',
       "</div>",
+      deployPane,
       '<div class="dialog-actions">',
       '  <button type="button" id="wb-settings-all" class="btn">全部打开</button>',
       '  <span class="dialog-spacer"></span>',
@@ -1376,6 +1388,7 @@
     });
     paintSettingsFooter(dialog);
     mountSyncPanel(dialog);
+    mountDeployPanel(dialog);
   }
 
   // 触屏拖不动侧栏顺序，给一对上下按钮
@@ -1416,6 +1429,34 @@
     if (slot && root.SyncUI) root.SyncUI.mount(slot);
   }
 
+  // 发布分区：js/deploy.js 用到才加载（18 个页面各引一份没必要），加载完再挂上去
+  let deployScriptPromise = null;
+
+  function loadDeployScript() {
+    if (root.DeployUI) return Promise.resolve();
+    if (deployScriptPromise) return deployScriptPromise;
+    deployScriptPromise = new Promise((resolve) => {
+      const script = document.createElement("script");
+      script.src = "js/deploy.js";
+      script.async = true;
+      script.onload = () => resolve();
+      script.onerror = () => { deployScriptPromise = null; resolve(); };
+      document.head.appendChild(script);
+    });
+    return deployScriptPromise;
+  }
+
+  function mountDeployPanel(dialog) {
+    const slot = dialog.querySelector("#wb-deploy-slot");
+    if (!slot) return;
+    if (root.DeployUI) { root.DeployUI.mount(slot); return; }
+    slot.textContent = "正在加载发布面板…";
+    loadDeployScript().then(() => {
+      if (root.DeployUI) root.DeployUI.mount(slot);
+      else slot.textContent = "加载 js/deploy.js 失败，检查这个文件在不在。";
+    });
+  }
+
   function paintSettingsFooter(dialog) {
     const hidden = hiddenPages().size;
     const all = dialog.querySelector("#wb-settings-all");
@@ -1428,11 +1469,11 @@
     if (nav) renderNavItems(nav, activePage);
   }
 
-  // tab 传 "sync" 就落在云同步那一页（默认「页面」）；focusId 用来高亮某一行
+  // tab 传 "sync" / "deploy" 就落在对应那一页（默认「页面」）；focusId 用来高亮某一行
   function openSettings(focusId, tab) {
     paintSettings();
     const dialog = settingsDialog();
-    switchSettingsTab(dialog, tab === "sync" ? "sync" : "pages");
+    switchSettingsTab(dialog, tab === "sync" || tab === "deploy" ? tab : "pages");
     if (!dialog.open) dialog.showModal();
     if (focusId) highlightSetting(dialog, focusId);
   }

@@ -578,6 +578,12 @@ sealed class WorkbenchHost {
         return;
       }
 
+      // 发布页面到线上：跑 scripts/deploy.ps1，把输出回给设置里的「发布」面板
+      if (request.Url.AbsolutePath.StartsWith("/deploy/", StringComparison.OrdinalIgnoreCase)) {
+        HandleDeploy(context, ownOrigin);
+        return;
+      }
+
       // 截图：Alt+A 点「保存」后先躺在服务端内存里，由浏览器端认领写进数据文件夹
       if (string.Equals(request.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase) &&
           string.Equals(request.Url.AbsolutePath, "/shots", StringComparison.OrdinalIgnoreCase)) {
@@ -1617,6 +1623,230 @@ sealed class WorkbenchHost {
   sealed class GitStream {
     public StringBuilder text = new StringBuilder();
     public bool truncated;
+  }
+
+  // ---- 发布页面到线上（/deploy/*）----
+  // 发布逻辑全在 scripts/deploy.ps1 里（挑该发的文件、把密钥挡在外面、调 tcb 上传）。
+  // 这里只做三件事：起一个 powershell 跑它、把输出攒成日志给页面轮询、取消时连子进程一起收掉。
+
+  // tcb 的输出带着 ANSI 颜色码（管道接走也不关），原样塞进页面的 <pre> 会变成 [90m 这种噪声，先剥掉
+  static readonly Regex AnsiPattern = new Regex("\u001b\\[[0-9;?]*[ -/]*[@-~]", RegexOptions.Compiled);
+
+  static string StripAnsi(string text) {
+    if (string.IsNullOrEmpty(text) || text.IndexOf('\u001b') < 0) return text;
+    return AnsiPattern.Replace(text, "");
+  }
+
+  sealed class DeployJob {
+    public Process process;
+    public StringBuilder log = new StringBuilder();
+    public bool running;
+    public bool cancelled;
+    public int exitCode = -1;
+    public DateTime started = DateTime.Now;
+    public DateTime finished = DateTime.Now;
+    public string title = "";
+
+    public void Append(string line) {
+      lock (DeployGate) {
+        log.Append(StripAnsi(line)).Append("\r\n");
+        if (log.Length > DeployLogLimit) log.Remove(0, log.Length - DeployLogLimit);
+      }
+    }
+  }
+
+  static readonly object DeployGate = new object();
+  static readonly Encoding DeployEncoding = new UTF8Encoding(false);
+  static DeployJob deployJob;
+  const int DeployLogLimit = 60000;
+
+  static void HandleDeploy(HttpListenerContext context, bool ownOrigin) {
+    HttpListenerRequest request = context.Request;
+    HttpListenerResponse response = context.Response;
+    string path = request.Url.AbsolutePath.ToLowerInvariant();
+    bool isPost = string.Equals(request.HttpMethod, "POST", StringComparison.OrdinalIgnoreCase);
+
+    // 只读的状态查询和 GET /baidu/spool 一个口径：同源 GET 浏览器不带 Origin，带了别人的才拒绝。
+    // 会开进程的 run / cancel 则和 git 同级，必须是自己页面发来的 POST（局域网设备、file:// 一律拒绝）。
+    if (!isPost && path == "/deploy/status") {
+      string getOrigin = request.Headers["Origin"];
+      if (!string.IsNullOrEmpty(getOrigin) && !ownOrigin) { Send(response, 403, "text/plain", "forbidden"); return; }
+      Send(response, 200, "application/json", DeployStatusJson());
+      return;
+    }
+    if (!isPost) {
+      Send(response, 405, "text/plain", "method not allowed");
+      return;
+    }
+    if (!ownOrigin) { Send(response, 403, "text/plain", "forbidden"); return; }
+
+    string body;
+    using (StreamReader reader = new StreamReader(request.InputStream, Encoding.UTF8)) {
+      body = reader.ReadToEnd();
+    }
+    Dictionary<string, object> payload = null;
+    try { payload = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(body == null ? "" : body); }
+    catch (Exception) { payload = null; }
+
+    if (path == "/deploy/run") { Send(response, 200, "application/json", DeployRunJson(payload)); return; }
+    if (path == "/deploy/cancel") { Send(response, 200, "application/json", DeployCancelJson()); return; }
+    Send(response, 404, "text/plain", "not found");
+  }
+
+  static string DeployJson(bool ok, string error) {
+    Dictionary<string, object> result = new Dictionary<string, object>();
+    result["ok"] = ok;
+    result["error"] = error == null ? "" : error;
+    return new JavaScriptSerializer().Serialize(result);
+  }
+
+  static string DeployStatusJson() {
+    lock (DeployGate) {
+      Dictionary<string, object> result = new Dictionary<string, object>();
+      bool has = deployJob != null;
+      bool running = has && deployJob.running;
+      result["ok"] = true;
+      result["hasJob"] = has;
+      result["running"] = running;
+      result["cancelled"] = has && deployJob.cancelled;
+      result["exitCode"] = has ? deployJob.exitCode : -1;
+      result["title"] = has ? deployJob.title : "";
+      result["log"] = has ? deployJob.log.ToString() : "";
+      double ms = 0;
+      if (has) {
+        DateTime end = running ? DateTime.Now : deployJob.finished;
+        ms = (end - deployJob.started).TotalMilliseconds;
+        if (ms < 0) ms = 0;
+      }
+      result["elapsedMs"] = (long)ms;
+      return new JavaScriptSerializer().Serialize(result);
+    }
+  }
+
+  static string DeployRunJson(Dictionary<string, object> payload) {
+    string script = Path.Combine(Root, "scripts", "deploy.ps1");
+    if (!File.Exists(script)) return DeployJson(false, "找不到发布脚本：scripts\\deploy.ps1");
+
+    string only = DeployArgValue(payload, "only");
+    bool bump = DeployArgBool(payload, "bump");
+    bool dryRun = DeployArgBool(payload, "dryRun");
+    bool prune = DeployArgBool(payload, "prune");
+    bool noVerify = DeployArgBool(payload, "noVerify");
+
+    // 全量发布时 only 为空，脚本自己会挑「该发的全部」
+    ProcessStartInfo start = new ProcessStartInfo();
+    start.FileName = "powershell.exe";
+    start.Arguments = DeployArguments(script, only, bump, dryRun, prune, noVerify);
+    start.WorkingDirectory = Root;
+    start.UseShellExecute = false;
+    start.CreateNoWindow = true;
+    start.RedirectStandardOutput = true;
+    start.RedirectStandardError = true;
+    // deploy.ps1 在输出被重定向时会切成 UTF-8，这里跟着用 UTF-8 收，中文日志才不会乱码
+    start.StandardOutputEncoding = DeployEncoding;
+    start.StandardErrorEncoding = DeployEncoding;
+
+    lock (DeployGate) {
+      if (deployJob != null && deployJob.running) {
+        return DeployJson(false, "上一次发布还在跑，等它结束或者点「取消」");
+      }
+      Process process;
+      try { process = Process.Start(start); }
+      catch (Exception ex) { return DeployJson(false, "起不了 powershell：" + ex.Message); }
+      if (process == null) return DeployJson(false, "起不了 powershell");
+
+      deployJob = new DeployJob();
+      deployJob.process = process;
+      deployJob.running = true;
+      deployJob.title = DeployTitle(only, dryRun, bump);
+      Thread pump = new Thread(delegate() { DeployPump(deployJob); });
+      pump.IsBackground = true;
+      pump.Start();
+    }
+    return DeployJson(true, "");
+  }
+
+  static string DeployTitle(string only, bool dryRun, bool bump) {
+    StringBuilder title = new StringBuilder(only.Length > 0 ? only : "全部");
+    if (dryRun) title.Append("·空跑");
+    if (bump) title.Append("·改版本戳");
+    return title.ToString();
+  }
+
+  // 参数自己拼，不经过 shell：only 过字符白名单，其余都是固定开关
+  static string DeployArguments(string script, string only, bool bump, bool dryRun, bool prune, bool noVerify) {
+    StringBuilder args = new StringBuilder();
+    args.Append("-NoProfile -ExecutionPolicy Bypass -File \"").Append(script).Append("\"");
+    if (only.Length > 0) args.Append(" -Only \"").Append(only).Append("\"");
+    if (bump) args.Append(" -Bump");
+    if (dryRun) args.Append(" -DryRun");
+    if (prune) args.Append(" -Prune");
+    if (noVerify) args.Append(" -NoVerify");
+    return args.ToString();
+  }
+
+  // only 只可能是 js / css / fonts / icons / html 或根目录下的文件名。
+  // 白名单之外的字符（引号、分号、空格、中文…）直接丢掉，免得从别处构造出能改变命令行的值。
+  static string DeployArgValue(Dictionary<string, object> payload, string key) {
+    string value = DeployArgRaw(payload, key).Trim();
+    if (value.Length == 0) return "";
+    StringBuilder clean = new StringBuilder();
+    for (int i = 0; i < value.Length; i++) {
+      char c = value[i];
+      bool keep = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+                  || c == ',' || c == '-' || c == '_' || c == '.';
+      if (keep) clean.Append(c);
+    }
+    return clean.ToString();
+  }
+
+  static string DeployArgRaw(Dictionary<string, object> payload, string key) {
+    if (payload == null || !payload.ContainsKey(key) || payload[key] == null) return "";
+    return Convert.ToString(payload[key]);
+  }
+
+  static bool DeployArgBool(Dictionary<string, object> payload, string key) {
+    if (payload == null || !payload.ContainsKey(key) || payload[key] == null) return false;
+    object value = payload[key];
+    if (value is bool) return (bool)value;
+    return string.Equals(Convert.ToString(value), "true", StringComparison.OrdinalIgnoreCase);
+  }
+
+  static string DeployCancelJson() {
+    Process target = null;
+    lock (DeployGate) {
+      if (deployJob == null || !deployJob.running) return DeployJson(false, "现在没有在跑的发布");
+      deployJob.cancelled = true;
+      target = deployJob.process;
+    }
+    deployJob.Append("（已请求取消，正在收掉 powershell 与它的子进程…）");
+    GitKillTree(target);
+    return DeployJson(true, "");
+  }
+
+  // 一条线程读完 stdout（stderr 另起一条，带 [stderr] 前缀显示），读完等进程退出
+  static void DeployPump(DeployJob job) {
+    Thread errors = new Thread(delegate() { DeployPumpStream(job, job.process.StandardError, true); });
+    errors.IsBackground = true;
+    errors.Start();
+    DeployPumpStream(job, job.process.StandardOutput, false);
+    try { errors.Join(2000); } catch (Exception) { }
+    try { job.process.WaitForExit(); } catch (Exception) { }
+    lock (DeployGate) {
+      job.running = false;
+      job.finished = DateTime.Now;
+      try { job.exitCode = job.process.ExitCode; } catch (Exception) { job.exitCode = -1; }
+    }
+    try { job.process.Dispose(); } catch (Exception) { }
+  }
+
+  static void DeployPumpStream(DeployJob job, StreamReader reader, bool isError) {
+    try {
+      string line;
+      while ((line = reader.ReadLine()) != null) {
+        job.Append(isError ? ("[stderr] " + line) : line);
+      }
+    } catch (Exception) { }
   }
 
   static void HandleGit(HttpListenerContext context, bool ownOrigin) {

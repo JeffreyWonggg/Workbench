@@ -2682,7 +2682,7 @@ h2 { font-size: var(--text-lg); }
 
 .commute-seg-note { margin: 6px 0 0; font-size: 12px; }
 
-/* 「详情」弹窗：时段统计 */
+/* 「详情」弹窗：最近七天统计 */
 .commute-stats-dialog { width: min(760px, calc(100vw - 32px)); }
 
 .commute-stats { display: flex; flex-direction: column; gap: var(--space-3); }
@@ -2693,19 +2693,86 @@ h2 { font-size: var(--text-lg); }
 
 .commute-summary { margin: 0; font-size: 13px; }
 
-.commute-bars-host { display: flex; flex-direction: column; gap: 4px; }
+/* 「某一天的小时段」：24 根柱子铺满一行 —— 一天近百条样本摊到 24 段，格子很窄，
+   数值写在柱子上会糊成一片，所以只在图上方那行总结和图下方那行点选里给 */
+.commute-day-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  font-size: 12px;
+}
 
-.commute-bars {
+.commute-day-input {
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.commute-day-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.commute-day-head .btn { font-size: 13px; }
+
+.commute-day-sum { margin: var(--space-2) 0 0; font-size: 12px; }
+
+.commute-hours-host { display: flex; flex-direction: column; gap: 4px; }
+
+.commute-hours {
   display: grid;
   grid-template-columns: repeat(24, 1fr);
   align-items: end;
-  gap: 3px;
-  height: 120px;
+  gap: 2px;
+  height: 116px;
   padding-bottom: 2px;
   border-bottom: 1px solid var(--line);
 }
 
-.commute-bar-col { display: flex; align-items: flex-end; height: 100%; }
+/* 点中的那段实心高亮，别跟旁边没点的混在一起 */
+.commute-bar-col-fill.is-picked { opacity: 1; background: var(--text); }
+
+.commute-hour-axis {
+  display: grid;
+  grid-template-columns: repeat(24, 1fr);
+  gap: 2px;
+  font-size: 9px;
+  color: var(--muted);
+}
+
+.commute-hour-axis span { text-align: center; }
+
+.commute-day-pick { margin: 0; font-size: 12px; }
+
+.commute-bars-host { display: flex; flex-direction: column; gap: 4px; }
+
+.commute-bars {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  align-items: end;
+  gap: 6px;
+  /* 顶上这 18px 是给柱子上面那行耗时留的：它常驻显示，不再靠悬浮 */
+  height: 136px;
+  padding-top: 18px;
+  padding-bottom: 2px;
+  border-bottom: 1px solid var(--line);
+}
+
+.commute-bar-col { position: relative; display: flex; align-items: flex-end; height: 100%; }
+
+/* 当天平均耗时：bottom 由 JS 按柱高写进来，贴在柱子正上方 */
+.commute-bar-value {
+  position: absolute;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  white-space: nowrap;
+}
 
 .commute-bar-col-fill {
   width: 100%;
@@ -2715,14 +2782,17 @@ h2 { font-size: var(--text-lg); }
   transition: height 240ms ease;
 }
 
-/* 一小时只有一条样本的时段弱化显示，免得几条数据看着像规律 */
+/* 一天只采到一条样本时弱化显示，免得一条数据看着像规律 */
 .commute-bar-col-fill.is-thin { opacity: 0.38; }
 
 .commute-bar-col-fill.is-none { background: var(--line); opacity: 1; }
 
-.commute-axis { display: grid; grid-template-columns: repeat(24, 1fr); gap: 3px; font-size: 10px; color: var(--muted); }
+.commute-axis { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; font-size: 10px; color: var(--muted); }
 
 .commute-axis span { text-align: center; }
+
+/* 最后一格是今天，标出来 */
+.commute-axis span.is-today { color: var(--text); font-weight: 600; }
 
 .commute-caption { margin: 0; font-size: 12px; }
 
@@ -2841,7 +2911,11 @@ h2 { font-size: var(--text-lg); }
 @media (max-width: 560px) {
   .commute-figure { flex-direction: column; align-items: stretch; gap: var(--space-2); }
   .commute-spark { width: 100%; text-align: left; }
-  .commute-bars { height: 90px; gap: 2px; }
+  .commute-bars { height: 112px; gap: 4px; padding-top: 16px; }
+  .commute-bar-value { font-size: 9px; }
+  .commute-axis { gap: 4px; }
+  .commute-hours { height: 96px; gap: 1px; }
+  .commute-hour-axis { gap: 1px; }
 }
 
 /* ===== 首页「今天要做的」 ===== */
@@ -4808,6 +4882,41 @@ a.timeline-body:hover strong { color: var(--accent-strong); }
   line-height: 1.55;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* ===== 设置 → 发布 ===== */
+.deploy-opt {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 12px 0 0;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.deploy-opt input {
+  flex: none;
+  margin: 2px 0 0;
+}
+
+.deploy-log {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  max-height: 280px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--code-bg);
+  color: var(--code-ink);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.deploy-log:empty {
+  display: none;
 }
 
 

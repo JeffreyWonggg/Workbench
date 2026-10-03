@@ -53,3 +53,6 @@ desktop.ini
 /_*.html
 /_*.js
 /_*.png
+
+# ===== 发布脚本的本机配置（环境 ID / 站点地址）=====
+/scripts/deploy.local.json

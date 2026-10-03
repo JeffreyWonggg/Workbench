@@ -5,7 +5,9 @@
        看当前状态：预计耗时、里程、实时路况，以及"现在走值不值"的一句结论。
        想知道堵在哪一段，点「看分段路况」——分段明细本来就随每次采集一起回来了，
        点开只是把它显示出来（见服务端 BaiduRouteJson）。
-       看时间段规律：按工作日/周末分别聚合的小时均值条形图、最近 30 天热力格。
+       看时间段规律：点「详情」——某一天的小时段平均耗时（24 根柱，可挑最近 30 天里的任一天）、
+       最近七天每天的平均耗时条形图（数值直接写在柱子上）、最近 30 天热力格。
+       「现在走值不值」那句结论仍然拿工作日/周末的同时段历史均值当基准。
 
      取数不经过浏览器直连百度（Web 服务 API 没有 CORS 头），而是打同源接口
      GET /baidu/route，由 workbench-host.exe 拿着根目录 baidu.local.json 里的 AK
@@ -34,7 +36,11 @@
   const MAX_SAMPLES = 12000;
   const DAY_MS = 24 * 60 * 60 * 1000;
   const HEAT_DAYS = 30;
+  const WEEK_DAYS = 7;   // 详情里「最近七天」的柱子数
   const HOURS = 24;
+  const WEEK_LABEL = ["日", "一", "二", "三", "四", "五", "六"];
+  const PER_HOUR = 4;           // 15 分钟采一条，一个小时段满格 4 条
+  const DAY_PICK_DAYS = 30;     // 详情里能往回挑多少天，跟热力格同一个口径
 
   let store = null;
   let lastError = "";
@@ -42,14 +48,16 @@
   let timer = null;
   let configDialog = null;
   let statsDialog = null;
-  let statsGroup = "";
   let detail = null;      // 分段明细（按需取，见 segmentBlock）
   let detailOpen = false;
   let detailBusy = false;
   let detailError = "";
+  let statDay = 0;        // 详情里正看着哪一天（那天的零点时间戳；0 = 还没选，按今天算）
+  let pickedHour = -1;    // 详情里点中的小时段，-1 表示没点过（那就显示这天最慢的一段）
 
+  // view 是早期「工作日 / 周末」两个页签留下的字段，页签撤掉后不再写也不再读
   function emptyStore() {
-    return { version: 1, route: null, view: "", last: null, samples: [] };
+    return { version: 1, route: null, last: null, samples: [] };
   }
 
   function el(tag, className, text) {
@@ -101,7 +109,6 @@
     return {
       version: 1,
       route: origin && destination ? { origin: origin, destination: destination } : null,
-      view: raw.view === "weekend" ? "weekend" : (raw.view === "workday" ? "workday" : ""),
       last: raw.last && typeof raw.last === "object" ? raw.last : null,
       samples: prune(samples)
     };
@@ -309,6 +316,47 @@
     };
   }
 
+  /* 某一天的小时段：把那天 0 点到 24 点之间的样本按小时归拢（15 分钟采一条，
+     所以每段通常 4 条；只走通勤时段的线路，夜里那些段自然是 0 条）。 */
+  function dayHours(stamp) {
+    const buckets = emptyBuckets();
+    const start = startOfDay(stamp);
+    const end = start + DAY_MS;
+    let sum = 0;
+    let count = 0;
+    for (let i = 0; i < store.samples.length; i++) {
+      const sample = store.samples[i];
+      if (sample.t < start || sample.t >= end) continue;
+      const bucket = buckets[new Date(sample.t).getHours()];
+      bucket.sum += sample.d;
+      bucket.count += 1;
+      sum += sample.d;
+      count += 1;
+    }
+    return { buckets: buckets, sum: sum, count: count };
+  }
+
+  function startOfDay(stamp) {
+    const day = new Date(stamp);
+    day.setHours(0, 0, 0, 0);
+    return day.getTime();
+  }
+
+  // 能往回挑的范围：今天往前 30 天（跟热力格同一个口径）
+  function pickRange() {
+    const today = startOfDay(Date.now());
+    return { min: today - (DAY_PICK_DAYS - 1) * DAY_MS, max: today };
+  }
+
+  // <input type="date"> 给的是 "2026-10-03"，按本地时区还原成那天的零点
+  function dayStamp(value) {
+    const parts = String(value == null ? "" : value).split("-");
+    if (parts.length !== 3) return 0;
+    const date = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+    if (Number.isNaN(date.getTime())) return 0;
+    return startOfDay(date.getTime());
+  }
+
   function isWeekend(dow) {
     return dow === 0 || dow === 6;
   }
@@ -347,6 +395,12 @@
 
   function kilometersText(meters) {
     return (meters / 1000).toFixed(1) + " 公里";
+  }
+
+  // 柱子上那行字要窄：统一按分钟写，超过一小时也不写成「1 时 30 分」，
+  // 否则窄屏下相邻两根柱子的数字会挤到一起（悬浮里的完整写法仍是 durationText）
+  function minutesText(seconds) {
+    return Math.round(Number(seconds) / 60) + " 分";
   }
 
   // 基准：优先用"当前时段 + 当前是工作日/周末"的历史均值；
@@ -703,7 +757,6 @@
       openConfig();
       return;
     }
-    statsGroup = store.view === "weekend" || store.view === "workday" ? store.view : currentGroup();
     paintStats();
     if (typeof statsDialog.showModal === "function") statsDialog.showModal();
   }
@@ -717,26 +770,34 @@
     const summary = el("p", "commute-summary muted");
     form.append(summary);
 
-    const tabs = el("div", "settings-tabs");
-    [["workday", "工作日"], ["weekend", "周末"]].forEach((item) => {
-      const button = el("button", "settings-tab", item[1]);
-      button.type = "button";
-      button.dataset.group = item[0];
-      button.addEventListener("click", () => {
-        statsGroup = item[0];
-        if (store && store.route) {
-          store.view = item[0];
-          Workbench.writeJson(FILE, store).catch(() => {});
-        }
-        paintStats();
-      });
-      tabs.append(button);
-    });
-    form.append(tabs);
-
-    form.append(el("h4", null, "各时段平均耗时"));
+    form.append(el("h4", null, "最近七天"));
     const bars = el("div", "commute-bars-host");
     form.append(bars);
+
+    form.append(el("h4", null, "某一天的小时段（1 小时一段）"));
+    const dayHead = el("div", "commute-day-head");
+    const dayInput = document.createElement("input");
+    dayInput.type = "date";
+    dayInput.className = "commute-day-input";
+    dayInput.addEventListener("change", () => {
+      const stamp = dayStamp(dayInput.value);
+      if (!stamp) return; // 手输半截或清空时先不动，等它成为完整日期
+      statDay = stamp;
+      pickedHour = -1;
+      paintDayHours();
+    });
+    const dayToday = el("button", "btn", "今天");
+    dayToday.type = "button";
+    dayToday.addEventListener("click", () => {
+      statDay = pickRange().max;
+      pickedHour = -1;
+      paintDayHours();
+    });
+    dayHead.append(dayInput, dayToday, el("span", "muted", "每段取这一小时里的样本平均"));
+    const daySum = el("p", "commute-day-sum muted");
+    const hours = el("div", "commute-hours-host");
+    const dayPick = el("p", "commute-day-pick muted");
+    form.append(dayHead, daySum, hours, dayPick);
 
     form.append(el("h4", null, "最近 30 天"));
     const heat = el("div", "commute-heat-host");
@@ -751,80 +812,204 @@
 
     dialog.append(form);
     document.body.append(dialog);
-    statsParts = { summary: summary, tabs: tabs, bars: bars, heat: heat };
+    statsParts = {
+      summary: summary,
+      bars: bars,
+      heat: heat,
+      dayInput: dayInput,
+      dayToday: dayToday,
+      daySum: daySum,
+      dayPick: dayPick,
+      hours: hours
+    };
     return dialog;
   }
 
   function paintStats() {
     if (!statsParts) return;
     const agg = aggregate();
-    const group = statsGroup || currentGroup();
-    Array.prototype.forEach.call(statsParts.tabs.children, (button) => {
-      button.classList.toggle("is-active", button.dataset.group === group);
-    });
+    const days = weekDays(agg);
 
+    let sum = 0;
+    let count = 0;
+    days.forEach((item) => {
+      if (!item.entry) return;
+      sum += item.entry.sum;
+      count += item.entry.count;
+    });
     const bits = ["样本 " + agg.total + " 条", "覆盖 " + agg.coveredDays + " 天"];
-    const worst = worstHour(agg.buckets[group]);
-    if (worst) bits.push("最堵 " + pad(worst.hour) + " 点（平均 " + durationText(worst.mean) + "）");
+    if (count) bits.push("最近七天平均 " + durationText(sum / count));
     statsParts.summary.textContent = bits.join(" · ");
 
-    paintBars(statsParts.bars, agg, group);
+    paintWeekBars(statsParts.bars, days, agg.total);
+    paintDayHours();
     paintHeat(statsParts.heat, agg);
   }
 
-  function maxMean(rows) {
-    let max = 0;
-    for (let i = 0; i < rows.length; i++) {
-      if (!rows[i].count) continue;
-      const mean = rows[i].sum / rows[i].count;
-      if (mean > max) max = mean;
-    }
-    return max;
-  }
+  /* 某一天的小时段：24 根柱子，柱高是这一段里样本的平均耗时（按这天最慢的一段归一）。
+     一天最多 96 条样本摊到 24 段，格子窄得写不下数字，所以数值放在上面那行总结和
+     下面点选后的那一行里 —— 手机上也能看到，不靠悬浮。 */
+  function paintDayHours() {
+    if (!statsParts) return;
+    const range = pickRange();
+    if (!statDay) statDay = range.max;
+    if (statDay < range.min) statDay = range.min;
+    if (statDay > range.max) statDay = range.max;
+    const day = new Date(statDay);
+    statsParts.dayInput.min = dayKey(new Date(range.min));
+    statsParts.dayInput.max = dayKey(new Date(range.max));
+    statsParts.dayInput.value = dayKey(day);
+    statsParts.dayToday.disabled = statDay === range.max;
 
-  function worstHour(rows) {
-    let best = null;
-    for (let hour = 0; hour < rows.length; hour++) {
-      if (!rows[hour].count) continue;
-      const mean = rows[hour].sum / rows[hour].count;
-      if (!best || mean > best.mean) best = { hour: hour, mean: mean, count: rows[hour].count };
-    }
-    return best;
-  }
-
-  // 24 根柱子：纵轴按工作日/周末共同最大值归一，切换两组时高度才可以直接比
-  function paintBars(host, agg, group) {
+    const label = (statDay === range.max ? "今天 " : "")
+      + pad(day.getMonth() + 1) + "-" + pad(day.getDate()) + " 周" + WEEK_LABEL[day.getDay()];
+    const view = dayHours(statDay);
+    const host = statsParts.hours;
     host.innerHTML = "";
-    if (!agg.total) {
-      host.append(el("p", "empty", "还没有样本。每 15 分钟会自动采一条，攒上几天就看得出来了。"));
+    statsParts.dayPick.textContent = "";
+
+    if (!view.count) {
+      statsParts.daySum.textContent = label + " 没有样本。";
+      host.append(el("p", "empty", statDay === range.max
+        ? "今天还没采到样本：页面或本机服务每 15 分钟采一条，等等就有了。"
+        : "这天没采到样本，换一天看看。"));
       return;
     }
-    const rows = agg.buckets[group];
-    const other = agg.buckets[group === "workday" ? "weekend" : "workday"];
-    const max = Math.max(maxMean(rows), maxMean(other), 1);
-    const chart = el("div", "commute-bars");
-    for (let hour = 0; hour < HOURS; hour++) {
+
+    let max = 0;
+    let slowest = -1;
+    let fastest = -1;
+    let filled = 0;
+    view.buckets.forEach((bucket, hour) => {
+      if (!bucket.count) return;
+      filled += 1;
+      const mean = bucket.sum / bucket.count;
+      if (mean > max) max = mean;
+      if (slowest < 0 || mean > view.buckets[slowest].sum / view.buckets[slowest].count) slowest = hour;
+      if (fastest < 0 || mean < view.buckets[fastest].sum / view.buckets[fastest].count) fastest = hour;
+    });
+    if (max <= 0) max = 1;
+    statsParts.daySum.textContent = label + " · " + view.count + " 条样本，落在 " + filled
+      + " 个小时段上 · 这天平均 " + durationText(view.sum / view.count);
+
+    const chart = el("div", "commute-hours");
+    view.buckets.forEach((bucket, hour) => {
       const cell = el("div", "commute-bar-col");
       const bar = el("span", "commute-bar-col-fill");
-      const mean = rows[hour].count ? rows[hour].sum / rows[hour].count : 0;
-      bar.style.height = mean ? Math.max(4, Math.round((mean / max) * 100)) + "%" : "2px";
-      if (!rows[hour].count) bar.classList.add("is-none");
-      else if (rows[hour].count < 2) bar.classList.add("is-thin");
-      cell.title = rows[hour].count
-        ? pad(hour) + ":00 · 平均 " + durationText(mean) + " · " + rows[hour].count + " 条样本"
-        : pad(hour) + ":00 · 还没有样本";
+      if (!bucket.count) {
+        bar.style.height = "2px";
+        bar.classList.add("is-none");
+        cell.title = pad(hour) + ":00-" + pad(hour + 1) + ":00 · 没有样本";
+      } else {
+        const mean = bucket.sum / bucket.count;
+        bar.style.height = Math.max(4, Math.round((mean / max) * 100)) + "%";
+        // 满格 4 条，采得少的那段淡一些，免得一两条样本看着像规律
+        if (bucket.count < PER_HOUR) bar.classList.add("is-thin");
+        // 没点过的时候把最慢的那段标出来，跟下面那行文字对得上
+        if (hour === pickedHour || (pickedHour < 0 && hour === slowest)) bar.classList.add("is-picked");
+        cell.title = pad(hour) + ":00-" + pad(hour + 1) + ":00 · 平均 " + durationText(mean)
+          + " · " + bucket.count + " 条样本";
+        cell.addEventListener("click", () => {
+          pickedHour = hour;
+          paintDayHours();
+        });
+      }
       cell.append(bar);
       chart.append(cell);
-    }
+    });
     host.append(chart);
 
-    const axis = el("div", "commute-axis");
+    // 横轴每 3 小时标一次：24 格全标会糊成一片
+    const axis = el("div", "commute-hour-axis");
     for (let hour = 0; hour < HOURS; hour++) {
       axis.append(el("span", null, hour % 3 === 0 ? String(hour) : ""));
     }
     host.append(axis);
+
+    const hour = pickedHour >= 0 && view.buckets[pickedHour].count ? pickedHour : slowest;
+    const bucket = view.buckets[hour];
+    let tail = "";
+    if (slowest !== fastest) {
+      if (hour === slowest) tail = "（这天最慢）";
+      else if (hour === fastest) tail = "（这天最快）";
+    }
+    statsParts.dayPick.textContent = pad(hour) + ":00-" + pad(hour + 1) + ":00 · 平均 "
+      + durationText(bucket.sum / bucket.count) + " · " + bucket.count + " 条样本" + tail;
+  }
+
+  // 最近七天（含今天）每天一条：sum / count 就是那天的均值，没样本的那天 entry 为 null
+  function weekDays(agg) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const list = [];
+    for (let i = WEEK_DAYS - 1; i >= 0; i--) {
+      const day = new Date(today.getTime() - i * DAY_MS);
+      const entry = agg.days[dayKey(day)] || null;
+      list.push({
+        day: day,
+        key: dayKey(day),
+        entry: entry,
+        mean: entry ? entry.sum / entry.count : 0,
+        today: i === 0
+      });
+    }
+    return list;
+  }
+
+  // 七根柱子：高度是当天的平均耗时（按这七天的最大值归一），数值直接写在柱子上面。
+  // 以前画的是 24 小时分布、数值藏在 title 里——手机上根本没有悬浮，等于看不到数。
+  function paintWeekBars(host, days, total) {
+    host.innerHTML = "";
+    let max = 0;
+    let count = 0;
+    days.forEach((item) => {
+      count += item.entry ? item.entry.count : 0;
+      if (item.mean > max) max = item.mean;
+    });
+    if (!count) {
+      host.append(el("p", "empty", total
+        ? "最近七天没有样本（更早的样本还在，只是这几天没采到）。"
+        : "还没有样本。每 15 分钟会自动采一条，攒上几天就看得出来了。"));
+      return;
+    }
+    if (max <= 0) max = 1;
+
+    const chart = el("div", "commute-bars");
+    days.forEach((item) => {
+      const cell = el("div", "commute-bar-col");
+      const bar = el("span", "commute-bar-col-fill");
+      let height = 0;
+      if (item.entry) {
+        height = Math.max(4, Math.round((item.mean / max) * 100));
+        bar.style.height = height + "%";
+        // 一天只有一条样本时弱化显示，免得一条数据看着像规律
+        if (item.entry.count < 2) bar.classList.add("is-thin");
+        const value = el("span", "commute-bar-value", minutesText(item.mean));
+        // 柱高是百分比，数字跟着柱顶走：柱子上方永远显示当天耗时，不用悬浮
+        value.style.bottom = "calc(" + height + "% + 3px)";
+        cell.append(value);
+      } else {
+        bar.style.height = "2px";
+        bar.classList.add("is-none");
+      }
+      cell.title = item.entry
+        ? item.key + " 周" + WEEK_LABEL[item.day.getDay()] + " · 平均 " + durationText(item.mean)
+          + " · " + item.entry.count + " 条样本"
+        : item.key + " · 还没有样本";
+      cell.append(bar);
+      chart.append(cell);
+    });
+    host.append(chart);
+
+    const axis = el("div", "commute-axis");
+    days.forEach((item) => {
+      axis.append(el("span", item.today ? "is-today" : null,
+        pad(item.day.getMonth() + 1) + "-" + pad(item.day.getDate())));
+    });
+    host.append(axis);
     host.append(el("p", "commute-caption muted",
-      "纵轴按工作日 / 周末的共同最大值归一，所以两组的高度可以直接比；颜色越浅表示那个时段样本还少。"));
+      "横轴是最近七天（最后一格是今天），柱子上是那天的平均耗时（分钟），纵轴按这七天里最慢的一天归一。"
+      + "只采到一两条的那天会淡一些，灰色短条表示那天没有样本。"));
   }
 
   function paintHeat(host, agg) {
